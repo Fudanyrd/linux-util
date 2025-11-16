@@ -5,6 +5,8 @@
 typedef uint16_t u16;
 typedef uint32_t u32;
 
+static size_t nalloc;
+
 #define PGSIZE 4096
 
 #ifdef __DEBUG__
@@ -23,11 +25,12 @@ typedef uint32_t u32;
   } while (0)
 #endif
 
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <stdlib.h>
 
 static void *alloc_page(size_t pages) {
+  nalloc += pages * PGSIZE;
   void *ret = mmap(NULL, pages * PGSIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
                    MAP_PRIVATE | MAP_ANON, -1, 0);
   DBG("alloc %ld pages = %p", pages, ret);
@@ -228,6 +231,17 @@ void *mymalloc(size_t size) {
   return arena_alloc(are);
 }
 
+void *cpp_alloc(size_t size) {
+  DBG("cpp_alloc(%ld)", size);
+  if (size > 1024) {
+    size += PGSIZE - 1;
+    size /= PGSIZE;
+    return alloc_page(size);
+  }
+
+  return mymalloc(size);
+}
+
 static inline void *block_to_page(void *block) {
   uintptr_t addr = (uintptr_t)block;
   addr -= (addr % PGSIZE);
@@ -239,8 +253,8 @@ void myfree(void *pt) {
     return;
   }
   struct page_header *ph = block_to_page(pt);
-  if(ph->magic != MAGIC) {
-    write(2, "Invalid pointer passed to free.\n", 32);
+  if (ph->magic != MAGIC) {
+    (void)write(2, "Invalid pointer passed to free.\n", 32);
     abort();
   }
 
@@ -255,6 +269,17 @@ void myfree(void *pt) {
   if (ph->avail == ph->total) {
     /* keep this as a idle page, or free the page. */
     arena_add_idle(ph->are, ph);
+  }
+}
+
+void cpp_free(void *pt, size_t size) {
+  DBG("cppfree(%p, %ld)", pt, size);
+  if (size > 1024) {
+    MyAssert(((uintptr_t)pt) % PGSIZE == 0);
+    if (pt)
+      free_page(pt, (size + PGSIZE - 1) / PGSIZE);
+  } else {
+    myfree(pt);
   }
 }
 
@@ -292,7 +317,7 @@ void *myrealloc(void *pt, size_t size) {
 }
 
 #ifdef __HOOK__
-void *malloc(size_t size)  { return mymalloc(size); }
+void *malloc(size_t size) { return mymalloc(size); }
 void free(void *pt) { return myfree(pt); }
 
 void *realloc(void *pt, size_t size) { return myrealloc(pt, size); }
