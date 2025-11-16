@@ -1,0 +1,110 @@
+# Run C++ in Freestanding Environments
+
+## Preface
+
+Good programming languages make elegant programs. Unfortunately,
+they may have few low-level development tools, or require
+specific runtime support. I have recently attempted to make
+C++ programs work without linking its standard library(`-lstdc++`),
+and I'm sharing my findings in this document.
+
+
+## Compile without libstdc++
+
+To compiling C++ source code without runtime library support, you have to 
+use the `-fno-rtti`(disable RunTime Type Identification) and `-fno-exceptions` flag.
+Also, it is impossible to 
+
+> See also: [OSDev Wiki](https://wiki.osdev.org/Bare_Bones#Writing_a_kernel_in_C++)
+
+## Override `new` and `delete` Operator
+
+You probably have to implement your own `malloc` and `free` - `mymalloc` and
+`myfree`. After that, override `new` and `delete` like this:
+
+> Your `myfree` function can take two arguments: a pointer and 
+> size of its buffer. This may simplify some of your design.
+
+```c++
+void *operator new(unsigned long size) { return myalloc(size); }
+
+void *operator new[](unsigned long size) { return myalloc(size); }
+
+void operator delete(void *ptr, unsigned long size) {
+  myfree(ptr, size);
+}
+
+void operator delete[](void *ptr, unsigned long size) {
+  myfree(ptr, size);
+}
+```
+
+It is impossible to throw `std::bad_alloc` when your `mymalloc` fails,
+for exceptions are not supported without the standard library.
+
+> Take a look at the "new" header file as well. It is located at `/usr/include/c++/11/new`
+> on my machine.
+
+
+## Use Template Class
+
+I haven't found limitations of using template classes/structs. Use them
+as you feel fit.
+
+## Use Custom Allocators for Different Classes
+
+In this section we will go through a design of a `Node` class,
+which manages a single pointer and frees it in its destructor:
+
+```c++
+/* These are needed later. */
+inline void *operator new(size_t, void *__p) { return __p; }
+inline void *operator new[](size_t, void *__p) { return __p; }
+
+/* An allocator class, which simply pack our malloc/free.  */
+struct allocator {
+  void *malloc(unsigned long size) { return ::mymalloc(size); }
+  void free(void *pt, unsigned long size) { ::myfree(pt); }
+};
+
+/* Our template Node class. */
+template <typename _Tp, typename _Alloc = allocator> class Node {
+private:
+  _Tp *value_;
+
+public:
+  Node() : value_((_Tp *)_Alloc().malloc(sizeof(_Tp))) {
+    /* explicitly call the contructor of _Tp. */
+    ::new ((void *)value_) _Tp();
+  }
+
+  ~Node() { reset(); }
+private:
+  /* Explicitly calls the destructor, and frees the memory. */
+  void reset() {
+    if (!value_) {
+      return;
+    }
+    value_->~_Tp();
+    _Alloc().free((void *)value_, sizeof(_Tp));
+    value_ = nullptr;
+  }
+};
+```
+
+If your class unfortunately does not have a default constructor, 
+but it has a copy/move constructor, this shall work as well:
+
+```c++
+  /* --snip-- */
+  Node(_Tp &&other) : value_((_Tp *) _Alloc().malloc(sizeof(_Tp))) {
+    ::new ((void *) value_) _Tp((_Tp &&) other);
+  }
+```
+
+## Conclusion
+
+Most of C++'s features are supported without its runtime libraries.
+Make good use of them for your low-level(OS, system software, etc.) 
+development. The end.
+
