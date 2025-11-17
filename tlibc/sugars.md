@@ -53,6 +53,11 @@ as you feel fit.
 
 ## Use Custom Allocators for Different Classes
 
+> Please do not treat anything mentioned in this subsection
+> as my original work. They are not. They are simply my
+> discoveries when trying read the standard C++ library 
+> to code something of my own.
+
 In this section we will go through a design of a `Node` class,
 which manages a single pointer and frees it in its destructor:
 
@@ -92,6 +97,8 @@ private:
 };
 ```
 
+### Deal with Absence of a Default Constructor
+
 If your class unfortunately does not have a default constructor, 
 but it has a copy/move constructor, this shall work as well:
 
@@ -100,6 +107,46 @@ but it has a copy/move constructor, this shall work as well:
   Node(_Tp &&other) : value_((_Tp *) _Alloc().malloc(sizeof(_Tp))) {
     ::new ((void *) value_) _Tp((_Tp &&) other);
   }
+```
+
+### Explicitly Call the Contructor with Arbitray Argument List
+
+> Caveat: this only works with -std=c++17 or higher.
+
+Even if our class have a move constructor, our `Node` class
+still lacks flexibility of constructing more complex types.
+We want it to use any given constructor of its underlying type.
+
+Here's how to achieve this:
+
+```c++
+  template <typename... _Args> /* possibly variable length arglist */
+  Node (_Args&&... args) : value_((_Tp *) _Alloc().malloc(sizeof(_Tp))) {
+    ::new ((void *) value_) _Tp(into<_Args>(args) ...);
+  }
+```
+
+This is impossible without a `into` template function:
+
+```c++
+/* These are adapted from std::remove_reference, defined in <type_traits> */
+template <typename _Tp> struct _rm_ref {
+  typedef _Tp type;
+};
+template <typename _Tp> struct _rm_ref<_Tp &> {
+  typedef _Tp type;
+};
+template <typename _Tp> struct _rm_ref<_Tp &&> {
+  typedef _Tp type;
+};
+
+/* These are adapted from std::forward, defined in  <bits/move.h> */
+template <typename _Tp> constexpr _Tp &&into(typename _rm_ref<_Tp>::type &t) {
+  return (_Tp &&)t;
+}
+template <typename _Tp> constexpr _Tp &&into(typename _rm_ref<_Tp>::type &&t) {
+  return (_Tp &&)t;
+}
 ```
 
 ## Conclusion
