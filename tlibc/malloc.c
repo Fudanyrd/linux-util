@@ -330,4 +330,9 @@ void *calloc(size_t nmemb, size_t size) {
   }
   return ret;
 }
+
+void *reallocarray(void *pt, size_t nmemb, size_t size) {
+  size_t total = nmemb * size;
+  return myrealloc(pt, total);
+}
 #endif

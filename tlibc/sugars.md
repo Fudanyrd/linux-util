@@ -147,7 +147,70 @@ template <typename _Tp> constexpr _Tp &&into(typename _rm_ref<_Tp>::type &t) {
 template <typename _Tp> constexpr _Tp &&into(typename _rm_ref<_Tp>::type &&t) {
   return (_Tp &&)t;
 }
+
+/* Adapted from std::move() */
+template <typename _Tp>
+constexpr typename _rm_ref<_Tp>::type &&move(_Tp &&obj) noexcept {
+  return static_cast<typename _rm_ref<_Tp>::type &&>(obj);
+}
 ```
+
+### Inheritance
+
+Consider the following classes:
+
+```c++
+struct Person {
+  int age_;
+  char gender_;
+  Node<int> property_;
+  Person(int age, char gender, Node<int> &&p)
+      : age_(age), gender_(gender), property_(into<Node<int>>(p)) {}
+  virtual ~Person() { /* This person dies. */ }
+  virtual const char *feeling() const = 0;
+};
+
+struct Man : public Person {
+  Man(int age, Node<int> &&p) : Person(age, 'M', into<Node<int>>(p)) {}
+  ~Man() = default;
+  const char *feeling() const { return "😃"; }
+};
+
+struct Woman : public Person {
+  Woman(int age, Node<int> &&p) : Person(age, 'F', into<Node<int>>(p)) {}
+  ~Woman() = default;
+  const char *feeling() const { return "😭"; }
+};
+```
+
+And what we want is to use `Node<Person>` to store 
+both `Man` and `Woman`:
+
+```c++
+  Node<Person> node = Node<Man>(12, Node<int>(42));
+  node = Node<Woman>(41, Node<int>(42));
+  node = Node<int>(42); /* This should be forbidden. */
+```
+
+To achieve this, a template move constructor is needed:
+
+```c++
+  template <typename _Derived /* extends _Tp */>
+  Node(Node<_Derived, _Alloc> &&other) : value_(other.value_) {
+    other.value_ = nullptr;
+  }
+
+  template <typename _Derived /* extends _Tp */>
+  Node &operator=(Node<_Derived, _Alloc> &&other) {
+    drop(); /* Frees the pointer its currently keeping. */
+    this->value_ = other.value_;
+    other.value_ = nullptr;
+    return *this;
+  }
+```
+
+> However, this constructor won't work unless we
+> make `value_` a public member. An annoying issue(😭).
 
 ## Conclusion
 
