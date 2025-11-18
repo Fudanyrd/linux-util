@@ -188,4 +188,33 @@ void NIOBuf<_Context>::read(void *buf, size_t len) {
   }
 }
 
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
+struct SSLSockFd {
+  SSLSockFd() = default;
+
+  void close() {
+    if (ssl_) {
+      SSL_shutdown(ssl_);
+      SSL_free(ssl_);
+      ssl_ = nullptr;
+    }
+  }
+
+  bool valid() const { return ssl_; }
+
+  ssize_t read(void *buf, size_t len) {
+    ssize_t nr = SSL_read(ssl_, buf, (int)len);
+    return nr;
+  }
+
+  ssize_t write(const void *buf, size_t len) {
+    ssize_t nw = SSL_write(ssl_, buf, (int)len);
+    return nw;
+  }
+
+  SSL *ssl_{nullptr};
+};
+
 #endif /* _NIO_H_ 1 */

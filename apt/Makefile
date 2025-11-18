@@ -15,7 +15,7 @@ clean:
 nslookup: nio.o dns.o debug.o nslookup.o
 	$(CXX) $(CXXFLAGS) nio.o debug.o dns.o nslookup.o -o nslookup
 wget: nio.o http.o debug.o wget.o
-	$(CXX) $(CXXFLAGS) nio.o debug.o http.o wget.o -o wget
+	$(CXX) $(CXXFLAGS) nio.o debug.o http.o wget.o -lssl -o wget
 
 include debug.d
 include dns.d
