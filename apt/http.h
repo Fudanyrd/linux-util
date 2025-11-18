@@ -18,7 +18,7 @@ public:
           const std::string &host /* eg. "www.aol.com" */,
           const std::string &path /* eg. /index.html */ = "/",
           const std::vector<unsigned char> &content = {},
-          bool showServerResponse = false);
+          bool showServerResponse = false, const std::string &cookies = "");
 
 private:
   NIOBuf<_Context> buf_;
@@ -29,5 +29,7 @@ int test_http_main(int argc, char **argv, char **envp = nullptr);
 
 using HttpsClient = HttpClientTmpl<SSLSockFd>;
 int test_https_main(int argc, char **argv, char **envp = nullptr);
+
+int open_clientfd(const struct sockaddr *addr);
 
 #endif /* _HTTP_H_ 1 */

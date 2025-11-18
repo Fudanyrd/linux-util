@@ -13,10 +13,12 @@ std::vector<unsigned char> HttpClientTmpl<_Context>::request(
     _Context &ctx, const std::string &method /* = "GET" | "POST"*/,
     const std::string &host /* eg. "www.aol.com" */,
     const std::string &path /* eg. /index.html */,
-    const std::vector<unsigned char> &content, bool showServerResponse) {
+    const std::vector<unsigned char> &content, bool showServerResponse,
+    const std::string &cookies) {
   std::string req_header =
       method + " " + path + " HTTP/1.1\r\nHost: " + host +
-      "\r\nUser-Agent: Mozilla-5.0\r\nConnection: close\r\n";
+      "\r\nUser-Agent: Mozilla-5.0\r\nConnection: keep-alive\r\n";
+  req_header += cookies;
 
   std::vector<unsigned char> ret;
   buf_.reset(ctx);
@@ -88,12 +90,12 @@ std::vector<unsigned char> HttpClientTmpl<_Context>::request(
   ret = std::vector<unsigned char>(content_len);
   dbg.log("parsed content length = %ld\n", content_len);
   buf_.read(ret.data(), content_len);
-  buf_.close_sock();
+  // buf_.close_sock();
 
   return ret;
 }
 
-static int open_clientfd(const struct sockaddr *addr) {
+int open_clientfd(const struct sockaddr *addr) {
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
     perror("socket");
