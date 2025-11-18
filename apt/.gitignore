@@ -1,0 +1,5 @@
+wget
+nslookup
+demo.py
+*.d
+
