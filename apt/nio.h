@@ -184,7 +184,11 @@ void NIOBuf<_Context>::read(void *buf, size_t len) {
   }
 
   if (len) {
-    this->socket_.read(buf, len);
+    while (len) {
+      size_t nr = this->socket_.read(buf, len);
+      len -= nr;
+      buf += nr;
+    }
   }
 }
 
