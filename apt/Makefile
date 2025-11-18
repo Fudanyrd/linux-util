@@ -1,4 +1,6 @@
-default: nslookup
+PROGS = nslookup wget download
+
+default: $(PROGS)
 INCLUDES = -include ./debug.h
 CXXFLAGS = -g -fsanitize=address -Wall -O2
 
@@ -10,7 +12,7 @@ CXXFLAGS = -g -fsanitize=address -Wall -O2
 
 .PHONY: clean
 clean:
-	-rm -f *.o *.d *.a
+	-rm -f *.o *.d *.a $(PROGS)
 
 nslookup: nio.o dns.o debug.o nslookup.o
 	$(CXX) $(CXXFLAGS) nio.o debug.o dns.o nslookup.o -o nslookup
