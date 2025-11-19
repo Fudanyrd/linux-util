@@ -113,6 +113,12 @@ int main(int argc, char **argv) {
 
       FdConsumer consumer(1);
       client.consume<FdConsumer>(consumer, content_len);
+      client.close();
+      
+      /* Print response header. */
+      for (const auto &token : tokens) {
+        fprintf(stderr, " %s", token.c_str());
+      }
       fprintf(stderr, "Written %ld bytes.\n", consumer.n_written_);
 
     } catch (std::runtime_error &ex) {
