@@ -94,6 +94,13 @@ struct NIOBuf {
   void read(void *buf, size_t len);
   void fill(void);
 
+  /**
+   * @param consumer: a greedy consumer that consumes
+   * all bytes given to it via `_Consumer::consume`
+   */
+  template <typename _Consumer /* implements consume */>
+  void consume(_Consumer &consumer, size_t len) noexcept;
+
 private:
   _Context socket_;
   unsigned char *in_buf_;
@@ -260,6 +267,18 @@ void NIOBuf<_Context>::read(void *buf, size_t len) {
 struct SSLSockFd {
   SSLSockFd() = default;
 
+  SSLSockFd(int sockfd, SSL_CTX *ctx) {
+    ssl_ = SSL_new(ctx);
+    if (ssl_) {
+      if (SSL_set_fd(ssl_, sockfd) && SSL_connect(ssl_) == 1) {
+        /* Success. */
+      } else {
+        SSL_free(ssl_);
+        ssl_ = nullptr;
+      }
+    }
+  }
+
   void close() {
     if (ssl_) {
       SSL_shutdown(ssl_);
@@ -293,6 +312,54 @@ struct SSLSockFd {
     }
     return ctx;
   }
+};
+
+template <typename _Context>
+template <typename _Consumer /* implements consume */>
+void NIOBuf<_Context>::consume(_Consumer &consumer, size_t len) noexcept {
+  size_t n_consume;
+  bool stop;
+  if (len) {
+    n_consume = out_end_ - out_off_;
+    n_consume = std::min(n_consume, len);
+    /* Consumer will not return short values. */
+    stop = n_consume != consumer.consume(out_buf_ + out_off_, n_consume);
+    out_end_ = out_off_ = 0;
+    if (stop) {
+      return;
+    }
+
+    len -= n_consume;
+  }
+
+  while (len) {
+    /* Refill buffer. */
+    ssize_t nr = socket_.read(out_buf_, BUFSZ);
+    if (nr <= 0) {
+      /* Possibly error occurred. */
+      break;
+    }
+    n_consume = std::min((size_t)nr, len);
+    if (n_consume != consumer.consume(out_buf_, n_consume)) {
+      break;
+    }
+    len -= n_consume;
+  }
+}
+
+struct FdConsumer {
+  FdConsumer() = default;
+  FdConsumer(int write_fd) : wr_fd_(write_fd) {}
+  ~FdConsumer() {
+    if (wr_fd_ >= 0) {
+      close(wr_fd_);
+    }
+  }
+
+  size_t consume(void *addr, size_t len);
+
+  int wr_fd_{-1};
+  size_t n_written_{0};
 };
 
 #endif /* _NIO_H_ 1 */

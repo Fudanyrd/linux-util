@@ -94,28 +94,31 @@ int main(int argc, char **argv) {
     defer(close(rfd));
 
     SockFd sfd(rfd);
-    HttpResponse ret;
 
     /* Safely connect to remote, catch possible IO errors. */
     try {
       std::vector<unsigned char> dummy;
-      ret = client.request(sfd, "GET", domain, argv[1], dummy, cookies);
+      auto conn_ret =
+          client.connect(sfd, "GET", domain, argv[1], dummy, cookies);
+      auto &tokens = conn_ret.first;
+      size_t content_len = conn_ret.second;
+
+      if (!content_len) {
+        continue;
+      }
+      if (atoi(tokens[1].c_str()) != 200) {
+        fprintf(stderr, "Error status(reason: %s)\n", tokens[2].c_str());
+        continue;
+      }
+
+      FdConsumer consumer(1);
+      client.consume<FdConsumer>(consumer, content_len);
+      fprintf(stderr, "Written %ld bytes.\n", consumer.n_written_);
+
     } catch (std::runtime_error &ex) {
       dbg.log("dowload error: %s\n", ex.what());
       continue;
     }
-
-    /* Validate status code. */
-    if (ret.status() != 200) {
-      fprintf(stderr, "Error status(reason: %s)\n",
-              ret.header_tokens_[2].c_str());
-      continue;
-    }
-
-    /* OK. */
-    ret.printheader(stderr);
-    auto nw = write(1, ret.data_.data(), ret.data_.size());
-    dbg.log("written %ld bytes\n", nw);
     break;
   }
 

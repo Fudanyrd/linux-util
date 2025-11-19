@@ -63,6 +63,9 @@ public:
    * After `connect`, read the data for you to use.
    */
   ssize_t read(void *buf, size_t len) { return this->buf_.read(buf, len); }
+  template <typename _Consumer> void consume(_Consumer &consumer, size_t len) {
+    this->buf_.consume(consumer, len);
+  }
   /**
    * In the end, remember to close the socket.
    */
