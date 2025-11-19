@@ -1,4 +1,5 @@
 PROGS = nslookup wget download
+PROGS += apt
 
 default: $(PROGS)
 INCLUDES = -include ./debug.h
@@ -21,6 +22,11 @@ wget: nio.o http.o debug.o wget.o
 download: nio.o http.o debug.o download.o dns.o
 	$(CXX) $(CXXFLAGS) nio.o debug.o http.o dns.o download.o -lssl -o download
 
+apt: apt.o aptlist.o debug.o
+	$(CXX) $(CXXFLAGS) apt.o aptlist.o debug.o -o apt
+
+include aptlist.d
+include apt.d
 include debug.d
 include download.d
 include dns.d
