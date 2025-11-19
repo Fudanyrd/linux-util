@@ -6,8 +6,11 @@
 
 #include "nio.h"
 
+struct sockaddr;
+
 struct Ipv4Addr {
   unsigned char addr_[4];
+  void fill(struct sockaddr *dst, unsigned int port) const;
 };
 
 class Resolver {

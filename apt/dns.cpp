@@ -8,6 +8,13 @@
 #include "dns.h"
 #include "nio.h"
 
+void Ipv4Addr::fill(struct sockaddr *dst, unsigned int port) const {
+  struct sockaddr_in *saddr = (sockaddr_in *) dst;
+  saddr->sin_family = AF_INET;
+  *(uint32_t *)&(saddr->sin_addr) = *(uint32_t *) this->addr_;
+  saddr->sin_port = htons(port);
+}
+
 /*
  * Reference: https://en.wikipedia.org/wiki/Domain_Name_System
  */
