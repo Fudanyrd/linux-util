@@ -32,18 +32,12 @@ int main(int argc, char **argv) {
 
   const char *domain = "archive.ubuntu.com";
   const SSL_METHOD *method = TLS_client_method();
-  SSL_CTX *ctx = SSL_CTX_new(method);
+  SSL_CTX *ctx = SSLSockFd::SSLAllocContext();
   if (!ctx) {
     perror("wget: ssl_ctx_new: ");
     return 1;
   }
   defer(SSL_CTX_free(ctx));
-  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-  if (!SSL_CTX_set_default_verify_paths(ctx)) {
-    dbg.log("libssl: "
-            "Failed to set up trust store\n");
-    return 1;
-  }
 
   std::vector<Ipv4Addr> addrs;
   do {

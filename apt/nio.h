@@ -281,6 +281,18 @@ struct SSLSockFd {
   }
 
   SSL *ssl_{nullptr};
+
+  static SSL_CTX *SSLAllocContext() {
+    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+    if (ctx) {
+      SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
+      if (!SSL_CTX_set_default_verify_paths(ctx)) {
+        SSL_CTX_free(ctx);
+        ctx = nullptr;
+      }
+    }
+    return ctx;
+  }
 };
 
 #endif /* _NIO_H_ 1 */

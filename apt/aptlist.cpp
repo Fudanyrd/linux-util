@@ -118,6 +118,8 @@ void AptParse(
 
 void PackageDetail::print(FILE *ofile) const {
   fprintf(ofile, "Filename: %s\n", this->filename_.c_str());
+  fprintf(ofile, "Url: http://archive.ubuntu.com/ubuntu/%s \n",
+          this->filename_.c_str());
   fprintf(ofile, "Depends:");
   for (const auto &dep : this->deps_) {
     fprintf(ofile, " %s", dep.c_str());
