@@ -1,21 +1,25 @@
 #include "aptlist.h"
 
 #include <dirent.h>
+#include <fstream>
 #include <string.h>
 #include <unistd.h>
-#include <fstream>
 
 using std::ifstream;
+using std::string;
+using std::vector;
 
 static bool endswith(const char *s1, const char *end) {
   size_t l = strlen(s1);
   size_t le = strlen(end);
-  if (l < le) { return false; }
+  if (l < le) {
+    return false;
+  }
   return 0 == strcmp(s1 + (l - le), end);
 }
 
 static int info(int argc, char **argv) {
-  std::unordered_map<std::string, PackageDetail> table;
+  std::unordered_map<string, vector<PackageDetail>> table;
 
   DIR *dir = opendir("/var/lib/apt/lists/");
   if (chdir("/var/lib/apt/lists/") != 0) {
@@ -54,8 +58,17 @@ static int info(int argc, char **argv) {
       printf("Package: %s Not found\n\n", package);
       ret = 1;
     } else {
-      printf("Package: %s\n", package);
-      ptr->second.print(stdout);
+      const auto &records = ptr->second;
+      APT_ASSERT(records.size());
+
+      if (records.size() > 1) {
+        printf("Package: %s (%ld records)\n", package, records.size());
+      } else {
+        printf("Package: %s\n", package);
+      }
+      for (const auto &record : records) {
+        record.print(stdout);
+      }
       printf("\n");
     }
   }

@@ -38,4 +38,8 @@ std::pair<std::string, PackageDetail> AptParse(std::ifstream &ifile);
 void AptParse(std::ifstream &ifile,
               std::unordered_map<std::string, PackageDetail> &table);
 
+void AptParse(
+    std::ifstream &ifile,
+    std::unordered_map<std::string, std::vector<PackageDetail>> &table);
+
 #endif /* _APTLIST_H_ 1 */

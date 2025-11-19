@@ -102,6 +102,20 @@ void AptParse(std::ifstream &ifile,
   }
 }
 
+void AptParse(
+    std::ifstream &ifile,
+    std::unordered_map<std::string, std::vector<PackageDetail>> &table) {
+  for (;;) {
+    auto ret = AptParse(ifile);
+    if (ret.second.size_ == 0) {
+      /* Empty record. */
+      break;
+    }
+
+    table[ret.first].push_back(ret.second);
+  }
+}
+
 void PackageDetail::print(FILE *ofile) const {
   fprintf(ofile, "Filename: %s\n", this->filename_.c_str());
   fprintf(ofile, "Depends:");
