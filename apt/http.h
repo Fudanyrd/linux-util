@@ -40,12 +40,33 @@ class HttpClientTmpl {
 public:
   HttpClientTmpl() = default;
 
+  /**
+   * A wrapper of connect-read-close routine.
+   */
   HttpResponse request(_Context &ctx,
-                       const std::string &method /* = "GET" | "HOST"*/,
+                       const std::string &method /* = "GET" | "POST"*/,
                        const std::string &host /* eg. "www.aol.com" */,
                        const std::string &path /* eg. /index.html */ = "/",
                        const std::vector<unsigned char> &content = {},
                        const std::string &cookies = "");
+
+  /**
+   * Send request header and parse response header.
+   * @return [Tokenized response header, data length]
+   */
+  std::pair<std::vector<std::string>, size_t>
+  connect(_Context &ctx, const std::string &method, const std::string &host,
+          const std::string &path,
+          const std::vector<unsigned char> &content = {},
+          const std::string &cookies = "");
+  /**
+   * After `connect`, read the data for you to use.
+   */
+  ssize_t read(void *buf, size_t len) { return this->buf_.read(buf, len); }
+  /**
+   * In the end, remember to close the socket.
+   */
+  void close() { buf_.close_sock(); }
 
 private:
   NIOBuf<_Context> buf_;

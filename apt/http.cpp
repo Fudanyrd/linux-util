@@ -9,17 +9,15 @@
 using Token = std::string;
 
 template <typename _Context>
-HttpResponse HttpClientTmpl<_Context>::request(
-    _Context &ctx, const std::string &method /* = "GET" | "POST"*/,
-    const std::string &host /* eg. "www.aol.com" */,
-    const std::string &path /* eg. /index.html */,
-    const std::vector<unsigned char> &content, const std::string &cookies) {
+std::pair<std::vector<std::string>, size_t> HttpClientTmpl<_Context>::connect(
+    _Context &ctx, const std::string &method, const std::string &host,
+    const std::string &path, const std::vector<unsigned char> &content,
+    const std::string &cookies) {
   std::string req_header =
       method + " " + path + " HTTP/1.1\r\nHost: " + host +
       "\r\nUser-Agent: Mozilla-5.0\r\nConnection: keep-alive\r\n";
   req_header += cookies;
 
-  std::vector<unsigned char> ret;
   buf_.reset(ctx);
 
   /* Write http requests. */
@@ -38,6 +36,7 @@ HttpResponse HttpClientTmpl<_Context>::request(
   /* Start reading responses. */
   size_t content_len = 0;
   bool set_len = false;
+  bool succ = false;
   std::vector<Token> tokens;
   do {
     int ch = buf_.getch();
@@ -54,6 +53,7 @@ HttpResponse HttpClientTmpl<_Context>::request(
         if (ch == '\n') {
           /* End of line. */
           if (tokens.back() == "\n") {
+            succ = true;
             break;
           }
           tokens.push_back("\n");
@@ -79,6 +79,23 @@ HttpResponse HttpClientTmpl<_Context>::request(
     }
 
   } while (0);
+
+  if (!succ) {
+    return {tokens, 0};
+  }
+  return {tokens, content_len};
+}
+
+template <typename _Context>
+HttpResponse HttpClientTmpl<_Context>::request(
+    _Context &ctx, const std::string &method /* = "GET" | "POST"*/,
+    const std::string &host /* eg. "www.aol.com" */,
+    const std::string &path /* eg. /index.html */,
+    const std::vector<unsigned char> &content, const std::string &cookies) {
+
+  std::vector<unsigned char> ret;
+  auto [tokens, content_len] =
+      this->connect(ctx, method, host, path, content, cookies);
 
   ret = std::vector<unsigned char>(content_len);
   dbg.log("parsed content length = %ld\n", content_len);
