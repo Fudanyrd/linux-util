@@ -9,12 +9,11 @@
 using Token = std::string;
 
 template <typename _Context>
-std::vector<unsigned char> HttpClientTmpl<_Context>::request(
+HttpResponse HttpClientTmpl<_Context>::request(
     _Context &ctx, const std::string &method /* = "GET" | "POST"*/,
     const std::string &host /* eg. "www.aol.com" */,
     const std::string &path /* eg. /index.html */,
-    const std::vector<unsigned char> &content, bool showServerResponse,
-    const std::string &cookies) {
+    const std::vector<unsigned char> &content, const std::string &cookies) {
   std::string req_header =
       method + " " + path + " HTTP/1.1\r\nHost: " + host +
       "\r\nUser-Agent: Mozilla-5.0\r\nConnection: keep-alive\r\n";
@@ -39,9 +38,9 @@ std::vector<unsigned char> HttpClientTmpl<_Context>::request(
   /* Start reading responses. */
   size_t content_len = 0;
   bool set_len = false;
+  std::vector<Token> tokens;
   do {
     int ch = buf_.getch();
-    std::vector<Token> tokens;
     tokens.reserve(48);
     Token current;
     while (ch != EOF) {
@@ -79,12 +78,6 @@ std::vector<unsigned char> HttpClientTmpl<_Context>::request(
       current.clear();
     }
 
-    if (showServerResponse) {
-      for (const auto &token : tokens) {
-        std::cerr << ' ' << token;
-      }
-    }
-
   } while (0);
 
   ret = std::vector<unsigned char>(content_len);
@@ -92,7 +85,7 @@ std::vector<unsigned char> HttpClientTmpl<_Context>::request(
   buf_.read(ret.data(), content_len);
   // buf_.close_sock();
 
-  return ret;
+  return HttpResponse(tokens, ret);
 }
 
 int open_clientfd(const struct sockaddr *addr) {
@@ -125,9 +118,11 @@ int test_http_main(int argc, char **argv, char **envp) {
   }
   SockFd sfd(rfd);
   auto ret = client.request(sfd, "GET", "jyywiki.cn", "/OS/2022/index.html",
-                            dummy, true);
+                            dummy, "");
 
-  write(1, ret.data(), ret.size());
+  ret.printheader(stderr);
+  auto nw = write(1, ret.data_.data(), ret.data_.size());
+  dbg.log("written %ld bytes\n", nw);
   return 0;
 }
 
@@ -173,7 +168,9 @@ int test_https_main(int argc, char **argv, char **envp) {
 
   std::vector<unsigned char> dummy;
   auto ret = client.request(ssfd, "GET", "jyywiki.cn", "/OS/2022/index.html",
-                            dummy, true);
-  (void)write(1, ret.data(), ret.size());
+                            dummy, "");
+  ret.printheader(stderr);
+  auto nw = write(1, ret.data_.data(), ret.data_.size());
+  dbg.log("written %ld bytes\n", nw);
   return 0;
 }

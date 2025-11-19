@@ -88,6 +88,7 @@ int main(int argc, char **argv) {
   }
 #endif
   saddr.sin_port = htons(80);
+  HttpClient client;
   for (const auto &addr : addrs) {
     const unsigned char *b = (const unsigned char *)addr.addr_;
     fprintf(stderr, "Trying %d.%d.%d.%d\n", b[0], b[1], b[2], b[3]);
@@ -98,15 +99,31 @@ int main(int argc, char **argv) {
     }
     defer(close(rfd));
 
-    HttpClient client;
     SockFd sfd(rfd);
-    std::vector<unsigned char> dummy;
-    auto ret =
-        client.request(sfd, "GET", domain, argv[1], dummy, true, cookies);
-    (void)write(1, ret.data(), ret.size());
+    HttpResponse ret;
+
+    /* Safely connect to remote, catch possible IO errors. */
+    try {
+      std::vector<unsigned char> dummy;
+      ret = client.request(sfd, "GET", domain, argv[1], dummy, cookies);
+    } catch (std::runtime_error &ex) {
+      dbg.log("dowload error: %s\n", ex.what());
+      continue;
+    }
+
+    /* Validate status code. */
+    if (ret.status() != 200) {
+      fprintf(stderr, "Error status(reason: %s)\n",
+              ret.header_tokens_[2].c_str());
+      continue;
+    }
+
+    /* OK. */
+    ret.printheader(stderr);
+    auto nw = write(1, ret.data_.data(), ret.data_.size());
+    dbg.log("written %ld bytes\n", nw);
     break;
   }
 
   return 0;
 }
-
