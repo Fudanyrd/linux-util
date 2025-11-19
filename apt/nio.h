@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <errno.h>
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -13,8 +14,15 @@
 #define BUFSZ 8192
 
 /*
- * The `NIOBuf` is made a template class because: I want it to support
+ * The `NIOBuf` is made a template class because: we want it to support
  * SSL/TLS later, which requires using libssl's APIs.
+ *
+ * The buffer actually keeps to buffers, each of size `BUFSZ`: one for reading,
+ * the other for writing. It is recommended to keep the NIOBuf's lifetime as
+ * long as possible, for you can always re-initialize it with its `reset`
+ * method.
+ *
+ * The NIOBuf will safely deal with short count when reading/writing socket.
  */
 
 template <typename _Context /* implements close,valid,read,write,copyable */>
@@ -93,7 +101,65 @@ private:
   unsigned char *out_buf_;
   unsigned int out_off_{0};
   unsigned int out_end_{0};
+
+  /**
+   * Read at least `minb` bytes from socket and at most
+   * `maxb` bytes.
+   * @return number of bytes read.
+   * @throw std::runtime_error if EOF before `minb` bytes.
+   */
+  size_t short_read(void *buf, size_t minb, size_t maxb);
+
+  /**
+   * Deal with short value when writing to socket. If no IO error,
+   * this always writes `len` bytes to socket.
+   * @throw std::runtime_error if `socket_.write` fails.
+   */
+  void short_write(const void *buf, size_t len);
 };
+
+template <typename _Context>
+size_t NIOBuf<_Context>::short_read(void *buf, size_t minb, size_t maxb) {
+  APT_ASSERT(minb <= maxb);
+  size_t nr = 0;
+  while (nr < minb) {
+    ssize_t res = socket_.read(buf, maxb);
+    if (res < 0) {
+      dbg.log("socket: %s\n", strerror(errno));
+      throw std::runtime_error("socket read error");
+    }
+
+    if (res == 0) {
+      break;
+    }
+
+    nr += res;
+    buf += res;
+    APT_ASSERT(maxb >= (size_t)res);
+    maxb -= res;
+  }
+
+  if (nr < minb) {
+    throw std::runtime_error("ealy EOF when reading socket");
+  }
+  return nr;
+}
+
+template <typename _Context>
+void NIOBuf<_Context>::short_write(const void *_buf, size_t len) {
+  const char *buf = (const char *)_buf;
+
+  while (len) {
+    ssize_t nw = socket_.write((const void *)buf, len);
+    if (nw <= 0) {
+      dbg.log("socket: %s\n", strerror(errno));
+      throw std::runtime_error("socket write error");
+    }
+
+    len -= nw;
+    buf += nw;
+  }
+}
 
 template <typename _Context> NIOBuf<_Context>::~NIOBuf() {
   close_in();
@@ -102,9 +168,7 @@ template <typename _Context> NIOBuf<_Context>::~NIOBuf() {
 }
 
 template <typename _Context> void NIOBuf<_Context>::flush(void) {
-  if (socket_.write(in_buf_, this->in_off_) != in_off_) {
-    throw std::runtime_error("connection error");
-  }
+  this->short_write(in_buf_, this->in_off_);
   this->in_off_ = 0;
 }
 template <typename _Context> void NIOBuf<_Context>::fill(void) {
@@ -136,7 +200,7 @@ void NIOBuf<_Context>::write(const void *buf, size_t len) {
 
   if (len) {
     /* Directly write to socket. */
-    this->socket_.write(buf, len);
+    this->short_write(buf, len);
   }
 }
 
@@ -169,7 +233,9 @@ struct SockFd {
   ssize_t read(void *buf, size_t size) { return ::read(fd_, buf, size); }
 
   /* wrapper of write syscall, deal with short value. */
-  ssize_t write(const void *buf, size_t size);
+  ssize_t write(const void *buf, size_t size) {
+    return ::write(fd_, buf, size);
+  }
   int fd_;
 };
 
@@ -184,11 +250,7 @@ void NIOBuf<_Context>::read(void *buf, size_t len) {
   }
 
   if (len) {
-    while (len) {
-      size_t nr = this->socket_.read(buf, len);
-      len -= nr;
-      buf += nr;
-    }
+    this->short_read(buf, len, len);
   }
 }
 
