@@ -1,5 +1,6 @@
 wget
 apt
+apt-debug
 download
 nslookup
 demo.py

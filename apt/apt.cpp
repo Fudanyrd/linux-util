@@ -1,20 +1,48 @@
 #include "aptlist.h"
 
+#include <dirent.h>
+#include <string.h>
+#include <unistd.h>
 #include <fstream>
 
 using std::ifstream;
 
-static int info(int argc, char **argv) {
-  /*
-   * TODO: scan the directory, and parse all files whose
-   * name ends with "Packages".
-   */
-  ifstream ifile(
-      "/var/lib/apt/lists/"
-      "archive.ubuntu.com_ubuntu_dists_jammy_main_binary-amd64_Packages");
+static bool endswith(const char *s1, const char *end) {
+  size_t l = strlen(s1);
+  size_t le = strlen(end);
+  if (l < le) { return false; }
+  return 0 == strcmp(s1 + (l - le), end);
+}
 
+static int info(int argc, char **argv) {
   std::unordered_map<std::string, PackageDetail> table;
-  AptParse(ifile, table);
+
+  DIR *dir = opendir("/var/lib/apt/lists/");
+  if (chdir("/var/lib/apt/lists/") != 0) {
+    perror("chdir");
+    return 1;
+  }
+  if (!dir) {
+    perror("opendir");
+    return 1;
+  }
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    const char *fname = entry->d_name;
+    size_t len = strlen(fname);
+    if (len < 8) {
+      continue;
+    }
+    if (strcmp(fname + len - 8, "Packages") != 0) {
+      continue;
+    }
+
+    ifstream ifile(fname);
+    dbg.log("Parsing apt list file: %s\n", fname);
+    AptParse(ifile, table);
+    ifile.close();
+  }
+  closedir(dir);
 
   int ret = 0;
 
@@ -48,6 +76,9 @@ static std::unordered_map<std::string, int (*)(int, char **)> ops = {
 };
 
 int main(int argc, char **argv) {
+  if (endswith(argv[0], "debug")) {
+    dbg.on();
+  }
   if (!argv[1]) {
     argv[1] = "";
   }
