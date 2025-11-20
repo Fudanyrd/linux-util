@@ -84,6 +84,21 @@ using HttpsClient = HttpClientTmpl<SSLSockFd>;
 int test_https_main(int argc, char **argv, char **envp = nullptr);
 #endif /* CONFIG_HAS_SSL */
 
-int open_clientfd(const struct sockaddr *addr);
+int open_clientfd(const struct sockaddr *addr,
+                  size_t len = sizeof(struct sockaddr));
+
+/**
+ * Test connection to addr, and close the socket.
+ * @return 0 if a connection can be made; else errno.
+ */
+static inline int spider(const struct sockaddr *addr,
+                         size_t len = sizeof(struct sockaddr)) {
+  int sfd = open_clientfd(addr);
+  if (sfd < 0) {
+    return errno;
+  }
+  close(sfd);
+  return 0;
+}
 
 #endif /* _HTTP_H_ 1 */

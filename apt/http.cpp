@@ -105,14 +105,14 @@ HttpResponse HttpClientTmpl<_Context>::request(
   return HttpResponse(tokens, ret);
 }
 
-int open_clientfd(const struct sockaddr *addr) {
+int open_clientfd(const struct sockaddr *addr, size_t len) {
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
     perror("socket");
     return fd;
   }
 
-  if (connect(fd, addr, sizeof(*addr)) < 0) {
+  if (connect(fd, addr, len) < 0) {
     perror("connect");
     close(fd);
     return -1;

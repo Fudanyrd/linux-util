@@ -6,6 +6,7 @@
 #include <sys/types.h>
 
 #include "dns.h"
+#include "http.h"
 #include "nio.h"
 
 void Ipv4Addr::fill(struct sockaddr *dst, unsigned int port) const {
@@ -13,6 +14,12 @@ void Ipv4Addr::fill(struct sockaddr *dst, unsigned int port) const {
   saddr->sin_family = AF_INET;
   *(uint32_t *)&(saddr->sin_addr) = *(uint32_t *)this->addr_;
   saddr->sin_port = htons(port);
+}
+
+void Ipv6Addr::fill(struct sockaddr_in6 *dst, unsigned int port) const {
+  dst->sin6_family = AF_INET6;
+  memcpy(&dst->sin6_addr, this->addr_, sizeof(dst->sin6_addr));
+  dst->sin6_port = htons(port);
 }
 
 /*
@@ -134,10 +141,11 @@ void Resolver::do_init(const char *config) {
 
   make_ipv4(&this->server_addr_, a, b, c, d, 53);
 
-  dbg.log("DNS client: use %d.%d.%d.%d\n", a, b, c, d);
+  dbg.log("DNS server: use %d.%d.%d.%d\n", a, b, c, d);
 }
 
-static void push_question(const std::string &q, NIOBuf<SockFd> &buf) {
+static void push_question(const std::string &q, NIOBuf<SockFd> &buf,
+                          uint16_t class_, uint16_t type_) {
   /* Split domain name by . */
   const size_t n = q.size();
   for (size_t i = 0; i < n;) {
@@ -159,11 +167,13 @@ static void push_question(const std::string &q, NIOBuf<SockFd> &buf) {
   /* Terminate question. */
   buf.putch('\0');
   dns_question *dq = (dns_question *)buf.reserve_in(sizeof(dns_question));
-  dq->class_ = htons(IN);
-  dq->type_ = htons(A);
+  dq->class_ = htons(class_);
+  dq->type_ = htons(type_);
 }
 
-static void pop_rr(NIOBuf<SockFd> &buf, std::vector<Ipv4Addr> &addrs) {
+template <typename _Ip_Addr /* implements addrlen,data */>
+static void pop_rr(NIOBuf<SockFd> &buf, std::vector<_Ip_Addr> &addrs,
+                   uint16_t class_, uint16_t type_) {
   int ch;
 
   /* Ignore Name. */
@@ -176,8 +186,8 @@ static void pop_rr(NIOBuf<SockFd> &buf, std::vector<Ipv4Addr> &addrs) {
     return;
   }
 
-  uint16_t class_n = ntohs(IN);
-  uint16_t type_n = ntohs(A);
+  uint16_t class_n = ntohs(class_);
+  uint16_t type_n = ntohs(type_);
 
   dns_rr *rr;
   rr = (dns_rr *)buf.reserve_out(sizeof(*rr));
@@ -187,51 +197,56 @@ static void pop_rr(NIOBuf<SockFd> &buf, std::vector<Ipv4Addr> &addrs) {
     return;
   }
 
-  if (rr->rd_len_ != htons((uint16_t)sizeof(Ipv4Addr))) {
+  _Ip_Addr addr;
+  unsigned char *dat = addr.data();
+  size_t addrlen = addr.addrlen();
+  if (rr->rd_len_ != htons((uint16_t)addrlen)) {
     /* Invalid record. */
     buf.skip(ntohs(rr->rd_len_));
     return;
   }
 
-  Ipv4Addr addr;
-  int i;
-  for (i = 0; i < 4; i++) {
+  size_t i;
+  for (i = 0; i < addrlen; i++) {
     ch = buf.getch();
     if (ch == EOF) {
       break;
     }
-    addr.addr_[i] = (unsigned char)ch;
+    dat[i] = (unsigned char)ch;
   }
 
-  if (i == 4)
+  if (i == addrlen)
     addrs.push_back(addr);
 }
 
-std::vector<Ipv4Addr> Resolver::LookupV4(const std::string &domain) const {
+template <typename _Ip_Addr>
+void Resolver::LookupGeneric(const std::string &domain,
+                             std::vector<_Ip_Addr> &result, uint16_t class_,
+                             uint16_t type_) const {
   NIOBuf<SockFd> &buf = this->buf_;
 
   int fd = socket(AF_INET, SOCK_DGRAM, 0);
   if (fd < 0) {
     perror("socket");
-    return {};
+    return;
   }
 
   int cfd = connect(fd, &this->server_addr_, sizeof(server_addr_));
   if (cfd < 0) {
     perror("connect");
     close(fd);
-    return {};
+    return;
   }
 
   SockFd sfd(fd);
 
-  std::vector<Ipv4Addr> ret;
+  auto &ret = result;
   try {
     /* Send request. */
     buf.reset(sfd);
     unsigned char *header = buf.reserve_in(sizeof(struct dns_header));
     dns_header_make(header, 0x5);
-    push_question(domain, buf);
+    push_question(domain, buf, class_, type_);
     buf.flush();
 
     /* Parse resonse. */
@@ -260,7 +275,7 @@ std::vector<Ipv4Addr> Resolver::LookupV4(const std::string &domain) const {
 
     if (ch != EOF) {
       for (unsigned int it = 0; it < answers; it++) {
-        pop_rr(buf, ret);
+        pop_rr(buf, ret, class_, type_);
       }
     }
   } catch (std::runtime_error &ex) {
@@ -268,6 +283,16 @@ std::vector<Ipv4Addr> Resolver::LookupV4(const std::string &domain) const {
   }
 
   buf.close_sock();
+}
+
+std::vector<Ipv4Addr> Resolver::LookupV4(const std::string &domain) const {
+  std::vector<Ipv4Addr> ret;
+  this->LookupGeneric(domain, ret, IN, A);
+  return ret;
+}
+std::vector<Ipv6Addr> Resolver::LookupV6(const std::string &domain) const {
+  std::vector<Ipv6Addr> ret;
+  this->LookupGeneric(domain, ret, IN, AAAA);
   return ret;
 }
 
@@ -275,11 +300,23 @@ int Resolver::test_main(int argc, char **argv) {
   dbg.on();
   SharedBuf sb;
   Resolver resolv(sb, "/etc/resolv.conf");
-  auto res = resolv.LookupV4("jyywiki.cn");
+  const char *host = argv[1];
+  if (!host) {
+    /* Use a default. */
+    host = "archive.ubuntu.com";
+  }
+  auto res = resolv.LookupV4(host);
 
   for (const auto &addr : res) {
     const unsigned char *b = addr.addr_;
+    printf("Address: ");
     printf("%d.%d.%d.%d\n", b[0], b[1], b[2], b[3]);
+  }
+
+  for (const auto &addr : resolv.LookupV6(host)) {
+    printf("Address: ");
+    addr.print(stdout);
+    putchar('\n');
   }
   return 0;
 }

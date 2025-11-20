@@ -73,8 +73,14 @@ int main(int argc, char **argv) {
       if (!content_len) {
         continue;
       }
-      if (atoi(tokens[1].c_str()) != 200) {
+      const int status = atoi(tokens[1].c_str());
+      if (status != 200) {
         fprintf(stderr, "Error status(reason: %s)\n", tokens[2].c_str());
+        if (status / 100 == 4) {
+          /* There's no point to continue, for we'll get the same result. */
+          client.close();
+          break;
+        }
         continue;
       }
 

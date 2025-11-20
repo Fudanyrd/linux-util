@@ -26,6 +26,22 @@ static inline void make_ipv4(struct sockaddr *addr, unsigned char a,
 struct Ipv4Addr {
   unsigned char addr_[4];
   void fill(struct sockaddr *dst, unsigned int port) const;
+  unsigned char *data() { return addr_; }
+  size_t addrlen() { return sizeof(addr_); }
+};
+
+struct Ipv6Addr {
+  unsigned char addr_[16];
+  void fill(struct sockaddr_in6 *dst, unsigned int port) const;
+  unsigned char *data() { return addr_; }
+  size_t addrlen() { return sizeof(addr_); }
+
+  void print(FILE *file) const {
+    fprintf(file, "%02x%02x", addr_[0], addr_[1]);
+    for (auto i = 1u; i < sizeof(addr_) / 2; i++) {
+      fprintf(file, ":%02x%02x", addr_[i * 2], addr_[i * 2 + 1]);
+    }
+  }
 };
 
 class Resolver {
@@ -40,6 +56,8 @@ public:
    */
   std::vector<Ipv4Addr> LookupV4(const std::string &domain) const;
 
+  std::vector<Ipv6Addr> LookupV6(const std::string &domain) const;
+
   static int test_main(int argc, char **argv);
 
 private:
@@ -48,6 +66,10 @@ private:
   mutable NIOBuf<SockFd> buf_;
 
   void do_init(const char *config);
+
+  template <typename _Ip_Addr>
+  void LookupGeneric(const std::string &domain, std::vector<_Ip_Addr> &result,
+                     uint16_t class_, uint16_t type_) const;
 };
 
 #endif /* _DNS_H_ 1 */
