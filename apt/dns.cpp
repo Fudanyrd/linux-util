@@ -20,6 +20,8 @@ void Ipv6Addr::fill(struct sockaddr_in6 *dst, unsigned int port) const {
   dst->sin6_family = AF_INET6;
   memcpy(&dst->sin6_addr, this->addr_, sizeof(dst->sin6_addr));
   dst->sin6_port = htons(port);
+  dst->sin6_flowinfo = 0;
+  dst->sin6_scope_id = 0;
 }
 
 /*
@@ -91,8 +93,10 @@ static uint8_t *dns_header_make(uint8_t *buf, uint16_t transId) {
 }
 
 struct dns_question {
-#define A 0x0001    /* Host  Big Endian */
-#define AAAA 0x001c /* IP6 Big Endian */
+#define A 0x0001     /* Host  Big Endian */
+#define AAAA 0x001c  /* IP6 Big Endian */
+#define CNAME 0x0005 /* Canonical name */
+#define NS 0x0002    /* Authoritative name server. */
 
   uint16_t type_;
 
@@ -171,52 +175,58 @@ static void push_question(const std::string &q, NIOBuf<SockFd> &buf,
   dq->type_ = htons(type_);
 }
 
-template <typename _Ip_Addr /* implements addrlen,data */>
-static void pop_rr(NIOBuf<SockFd> &buf, std::vector<_Ip_Addr> &addrs,
-                   uint16_t class_, uint16_t type_) {
+static bool pop_query(NIOBuf<SockFd> &buf, std::vector<unsigned char> &data) {
+  /* Name field(terminate with 0.)*/
   int ch;
-
-  /* Ignore Name. */
-  ch = buf.getch();
-  if (ch == EOF) {
-    return;
-  }
-  ch = buf.getch();
-  if (ch == EOF) {
-    return;
-  }
-
-  uint16_t class_n = ntohs(class_);
-  uint16_t type_n = ntohs(type_);
-
-  dns_rr *rr;
-  rr = (dns_rr *)buf.reserve_out(sizeof(*rr));
-  if (rr->class_ != class_n || rr->type_ != type_n) {
-    /* Invalid record. */
-    buf.skip(ntohs(rr->rd_len_));
-    return;
-  }
-
-  _Ip_Addr addr;
-  unsigned char *dat = addr.data();
-  size_t addrlen = addr.addrlen();
-  if (rr->rd_len_ != htons((uint16_t)addrlen)) {
-    /* Invalid record. */
-    buf.skip(ntohs(rr->rd_len_));
-    return;
-  }
-
-  size_t i;
-  for (i = 0; i < addrlen; i++) {
+  for (;;) {
     ch = buf.getch();
     if (ch == EOF) {
+      return false;
+    }
+
+    data.push_back((unsigned char)ch);
+    if (ch == 0) {
       break;
     }
-    dat[i] = (unsigned char)ch;
   }
 
-  if (i == addrlen)
-    addrs.push_back(addr);
+  /* type + class */
+  for (auto i = 0u; i < 4; i++) {
+    ch = buf.getch();
+    if (ch == EOF) {
+      return false;
+    }
+    data.push_back((unsigned char)ch);
+  }
+  return true;
+}
+
+static bool pop_record(NIOBuf<SockFd> &buf, std::vector<unsigned char> &data) {
+  int ch;
+
+  unsigned int off = data.size();
+
+  /* name + dns_rr {type + class + ttl + rd_len} */
+  for (auto i = 0u; i < sizeof(struct dns_rr) + 2; i++) {
+    ch = buf.getch();
+    if (ch == EOF) {
+      /* Early EOF. */
+      return false;
+    }
+    data.push_back((unsigned char)ch);
+  }
+
+  struct dns_rr *rr = (struct dns_rr *)(data.data() + (off + 2));
+  uint16_t rd_len = ntohs(rr->rd_len_);
+  for (auto i = 0u; i < rd_len; i++) {
+    ch = buf.getch();
+    if (ch == EOF) {
+      return false;
+    }
+    data.push_back((unsigned char)ch);
+  }
+
+  return true;
 }
 
 template <typename _Ip_Addr>
@@ -245,7 +255,7 @@ void Resolver::LookupGeneric(const std::string &domain,
     /* Send request. */
     buf.reset(sfd);
     unsigned char *header = buf.reserve_in(sizeof(struct dns_header));
-    dns_header_make(header, 0x5);
+    dns_header_make(header, this->trans_id_++);
     push_question(domain, buf, class_, type_);
     buf.flush();
 
@@ -260,29 +270,89 @@ void Resolver::LookupGeneric(const std::string &domain,
     answers += ntohs(dhdr->n_answer_);
     answers += ntohs(dhdr->n_auth_rr_);
     answers += ntohs(dhdr->n_add_rr_);
+    unsigned int queries = ntohs(dhdr->n_question_);
 
-    /* Skip the query name. */
-    int ch = buf.getch();
-    while (ch != 0 && ch != EOF) {
-      ch = buf.getch();
-    }
-    for (size_t _i = 0; _i < sizeof(dns_question); _i++) {
-      ch = buf.getch();
-      if (ch == EOF) {
-        break;
+    std::vector<unsigned char> records;
+    std::vector<unsigned short>
+        record_offsets /* UDP: must fit in 65535 bytes. */;
+    unsigned int queries_got = 0;
+    unsigned int answers_got = 0;
+
+    records.reserve(256);
+    for (; queries_got < queries;) {
+      unsigned short start = records.size();
+      bool succ = pop_query(buf, records);
+      if (succ) {
+        record_offsets.push_back(start);
+        queries_got++;
       }
     }
+    if (queries_got != queries /* unlikely */) {
+      throw std::runtime_error("early EOF");
+    }
+    APT_ASSERT(record_offsets[0] == 0 && "incorrect offset");
 
-    if (ch != EOF) {
-      for (unsigned int it = 0; it < answers; it++) {
-        pop_rr(buf, ret, class_, type_);
+    for (; answers_got < answers;) {
+      unsigned short start = records.size();
+      bool succ = pop_record(buf, records);
+      if (succ) {
+        record_offsets.push_back(start);
+        answers_got++;
       }
+    }
+    if (answers_got == 0) {
+      throw std::runtime_error("early EOF");
+    }
+    buf.close_sock();
+
+    /* Continue with our answers even if we did not get enough. */
+    /* Parse the records we've got. Start from CNAME(aliases) */
+    unsigned char *base = records.data();
+    auto get_rr = [&](unsigned int id) -> unsigned char * {
+      return base + (record_offsets[id + queries]);
+    };
+
+    std::vector<unsigned char> cnames;
+    cnames.reserve(queries_got);
+    for (auto i = 0u; i < queries_got; i++) {
+      cnames.push_back(sizeof(dns_header) + record_offsets[i]);
+    }
+    const size_t addrlen = _Ip_Addr().addrlen();
+    for (unsigned int ans = 0; ans < answers_got; ans++) {
+      unsigned char *rec = get_rr(ans);
+      if (rec[0] != 0xc0) {
+        continue;
+      }
+      struct dns_rr *rr = (dns_rr *)(rec + 2);
+      if (CNAME != ntohs(rr->type_)) {
+        continue;
+      }
+      cnames.push_back(sizeof(dns_header) + ((unsigned char *)(rr + 1) - base));
+    }
+
+    for (unsigned int ans = 0; ans < answers_got; ans++) {
+      unsigned char *rec = get_rr(ans);
+      if (rec[0] != 0xc0 /* Name */) {
+        continue;
+      }
+      if (std::find(cnames.begin(), cnames.end(), rec[1]) == cnames.end()) {
+        /* Not the record we want. */
+        continue;
+      }
+      struct dns_rr *rr = (dns_rr *)(rec + 2);
+      if (class_ != ntohs(rr->class_) || type_ != ntohs(rr->type_) ||
+          ntohs(rr->rd_len_) != addrlen) {
+        continue;
+      }
+
+      _Ip_Addr addr;
+      memcpy(addr.data(), rec + 2 + sizeof(*rr), addrlen);
+      ret.push_back(addr);
     }
   } catch (std::runtime_error &ex) {
+    buf.close_sock();
     dbg.log("dnsclient: error: %s\n", ex.what());
   }
-
-  buf.close_sock();
 }
 
 std::vector<Ipv4Addr> Resolver::LookupV4(const std::string &domain) const {

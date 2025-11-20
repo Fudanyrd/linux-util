@@ -61,6 +61,7 @@ public:
   static int test_main(int argc, char **argv);
 
 private:
+  mutable unsigned short trans_id_{1};
   bool big_endian_;
   struct sockaddr server_addr_;
   mutable NIOBuf<SockFd> buf_;
