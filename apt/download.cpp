@@ -38,8 +38,8 @@ int main(int argc, char **argv) {
   const char *domain = "archive.ubuntu.com";
   std::vector<Ipv4Addr> addrs;
   /* Randomize the server to use(Assuming request is usually successful.) */
-  if (addrs.size() > 2) {
-    std::random_shuffle(addrs.begin(), addrs.end() - 1);
+  if (addrs.size() > 1) {
+    std::random_shuffle(addrs.begin(), addrs.end());
   }
   do {
     Resolver resolv(sb, "/etc/resolv.conf");
