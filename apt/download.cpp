@@ -19,6 +19,11 @@ int main(int argc, char **argv) {
     usage();
     return 0;
   }
+  SharedBuf sb;
+  if (!sb.in_buf_ || !sb.out_buf_) {
+    perror("mmap");
+    return 2;
+  }
 
   std::string cookies;
   if (argv[2]) {
@@ -32,15 +37,19 @@ int main(int argc, char **argv) {
 
   const char *domain = "archive.ubuntu.com";
   std::vector<Ipv4Addr> addrs;
+  /* Randomize the server to use(Assuming request is usually successful.) */
+  if (addrs.size() > 2) {
+    std::random_shuffle(addrs.begin(), addrs.end() - 1);
+  }
   do {
-    Resolver resolv("/etc/resolv.conf");
+    Resolver resolv(sb, "/etc/resolv.conf");
     addrs = resolv.LookupV4(domain);
   } while (0);
 
   struct sockaddr_in saddr;
   saddr.sin_family = AF_INET;
   saddr.sin_port = htons(80);
-  HttpClient client;
+  HttpClient client(sb);
   for (const auto &addr : addrs) {
     const unsigned char *b = (const unsigned char *)addr.addr_;
     fprintf(stderr, "Trying %d.%d.%d.%d\n", b[0], b[1], b[2], b[3]);
@@ -72,7 +81,7 @@ int main(int argc, char **argv) {
       FdConsumer consumer(1);
       client.consume<FdConsumer>(consumer, content_len);
       client.close();
-      
+
       /* Print response header. */
       for (const auto &token : tokens) {
         fprintf(stderr, " %s", token.c_str());

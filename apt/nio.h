@@ -11,7 +11,10 @@
 
 #include <stdexcept>
 
+#include "buf.h"
+#ifndef BUFSZ
 #define BUFSZ 8192
+#endif
 
 /*
  * The `NIOBuf` is made a template class because: we want it to support
@@ -33,6 +36,9 @@ struct NIOBuf {
     out_buf_ = (unsigned char *)mmap(NULL, BUFSZ, PROT_READ | PROT_WRITE,
                                      MAP_PRIVATE | MAP_ANON, -1, 0);
   }
+  NIOBuf(SharedBuf &sb)
+      : socket_(), in_buf_((unsigned char *)sb.in_buf_),
+        out_buf_((unsigned char *)sb.out_buf_), shared_(true) {}
   ~NIOBuf();
 
   /* Call this when starting a new transaction. */
@@ -42,16 +48,16 @@ struct NIOBuf {
   }
 
   void close_in(void) {
-    if (in_buf_) {
+    if ((!shared_) && in_buf_) {
       munmap(in_buf_, BUFSZ);
+      in_buf_ = nullptr;
     }
-    in_buf_ = nullptr;
   }
   void close_out(void) {
-    if (out_buf_) {
+    if ((!shared_) && out_buf_) {
       munmap(out_buf_, BUFSZ);
+      out_buf_ = nullptr;
     }
-    out_buf_ = nullptr;
   }
 
   void close_sock(void) {
@@ -108,6 +114,7 @@ private:
   unsigned char *out_buf_;
   unsigned int out_off_{0};
   unsigned int out_end_{0};
+  bool shared_{false};
 
   /**
    * Read at least `minb` bytes from socket and at most

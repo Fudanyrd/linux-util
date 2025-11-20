@@ -39,6 +39,7 @@ template <typename _Context /* implements close,valid,read,write,copyable */>
 class HttpClientTmpl {
 public:
   HttpClientTmpl() = default;
+  HttpClientTmpl(SharedBuf &sb) : buf_(sb) {}
 
   /**
    * A wrapper of connect-read-close routine.

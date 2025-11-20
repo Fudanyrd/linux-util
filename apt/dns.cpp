@@ -9,9 +9,9 @@
 #include "nio.h"
 
 void Ipv4Addr::fill(struct sockaddr *dst, unsigned int port) const {
-  struct sockaddr_in *saddr = (sockaddr_in *) dst;
+  struct sockaddr_in *saddr = (sockaddr_in *)dst;
   saddr->sin_family = AF_INET;
-  *(uint32_t *)&(saddr->sin_addr) = *(uint32_t *) this->addr_;
+  *(uint32_t *)&(saddr->sin_addr) = *(uint32_t *)this->addr_;
   saddr->sin_port = htons(port);
 }
 
@@ -105,7 +105,7 @@ struct dns_rr {
 
 #include "dns.h"
 
-Resolver::Resolver(const char *config) {
+void Resolver::do_init(const char *config) {
   int dummy = 1;
   big_endian_ = !(*(char *)(&dummy));
   static_assert(sizeof(struct dns_header) == 12);
@@ -132,10 +132,7 @@ Resolver::Resolver(const char *config) {
     }
   }
 
-  name_server_[0] = a;
-  name_server_[1] = b;
-  name_server_[2] = c;
-  name_server_[3] = d;
+  make_ipv4(&this->server_addr_, a, b, c, d, 53);
 
   dbg.log("DNS client: use %d.%d.%d.%d\n", a, b, c, d);
 }
@@ -219,11 +216,7 @@ std::vector<Ipv4Addr> Resolver::LookupV4(const std::string &domain) const {
     return {};
   }
 
-  struct sockaddr_in saddr;
-  saddr.sin_family = AF_INET;
-  *(uint32_t *)&saddr.sin_addr = *(uint32_t *)this->name_server_;
-  saddr.sin_port = htons(53);
-  int cfd = connect(fd, (const sockaddr *)&saddr, sizeof(saddr));
+  int cfd = connect(fd, &this->server_addr_, sizeof(server_addr_));
   if (cfd < 0) {
     perror("connect");
     close(fd);
@@ -280,7 +273,8 @@ std::vector<Ipv4Addr> Resolver::LookupV4(const std::string &domain) const {
 
 int Resolver::test_main(int argc, char **argv) {
   dbg.on();
-  Resolver resolv("/etc/resolv.conf");
+  SharedBuf sb;
+  Resolver resolv(sb, "/etc/resolv.conf");
   auto res = resolv.LookupV4("jyywiki.cn");
 
   for (const auto &addr : res) {
