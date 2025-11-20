@@ -31,14 +31,6 @@ int main(int argc, char **argv) {
   }
 
   const char *domain = "archive.ubuntu.com";
-  const SSL_METHOD *method = TLS_client_method();
-  SSL_CTX *ctx = SSLSockFd::SSLAllocContext();
-  if (!ctx) {
-    perror("wget: ssl_ctx_new: ");
-    return 1;
-  }
-  defer(SSL_CTX_free(ctx));
-
   std::vector<Ipv4Addr> addrs;
   do {
     Resolver resolv("/etc/resolv.conf");

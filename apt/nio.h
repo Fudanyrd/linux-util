@@ -261,6 +261,7 @@ void NIOBuf<_Context>::read(void *buf, size_t len) {
   }
 }
 
+#ifdef CONFIG_HAS_SSL
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
@@ -313,6 +314,7 @@ struct SSLSockFd {
     return ctx;
   }
 };
+#endif /* CONFIG_HAS_SSL */
 
 template <typename _Context>
 template <typename _Consumer /* implements consume */>

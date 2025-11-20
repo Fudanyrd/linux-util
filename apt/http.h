@@ -78,8 +78,10 @@ private:
 using HttpClient = HttpClientTmpl<SockFd>;
 int test_http_main(int argc, char **argv, char **envp = nullptr);
 
+#ifdef CONFIG_HAS_SSL
 using HttpsClient = HttpClientTmpl<SSLSockFd>;
 int test_https_main(int argc, char **argv, char **envp = nullptr);
+#endif /* CONFIG_HAS_SSL */
 
 int open_clientfd(const struct sockaddr *addr);
 

@@ -143,6 +143,11 @@ int test_http_main(int argc, char **argv, char **envp) {
   return 0;
 }
 
+#ifdef CONFIG_HAS_SSL
+#error "CONFIG_HAS_SSL is defined"
+#endif
+
+#ifdef CONFIG_HAS_SSL
 int test_https_main(int argc, char **argv, char **envp) {
   struct sockaddr_in saddr;
   saddr.sin_family = AF_INET;
@@ -191,3 +196,4 @@ int test_https_main(int argc, char **argv, char **envp) {
   dbg.log("written %ld bytes\n", nw);
   return 0;
 }
+#endif /* CONFIG_HAS_SSL */

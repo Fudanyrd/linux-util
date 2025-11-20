@@ -3,6 +3,7 @@ PROGS += apt
 PROGS += apt-debug
 
 default: $(PROGS)
+all: $(PROGS)
 INCLUDES = -include ./debug.h
 CXXFLAGS = -g -fsanitize=address -Wall -O2
 CXXFLAGS += -Wno-pointer-arith
@@ -27,15 +28,15 @@ CFLAGS = -g -fsanitize=address -Wall -O2
 clean:
 	-rm -f *.o *.d *.a $(PROGS)
 
-libnetutil.a: nio.o dns.o http.o debug.o
-	ar rcs libnetutil.a nio.o dns.o http.o debug.o
+libnetutil.a: nio.o dns.o http.o debug.o url.o
+	ar rcs libnetutil.a nio.o dns.o http.o debug.o url.o
 
-nslookup: nio.o dns.o debug.o nslookup.o
-	$(CXX) $(CXXFLAGS) nio.o debug.o dns.o nslookup.o -o nslookup
-wget: url.o nio.o http.o debug.o wget.o dns.o
-	$(CXX) $(CXXFLAGS) nio.o debug.o http.o wget.o url.o dns.o -lssl -o wget
-download: nio.o http.o debug.o download.o dns.o
-	$(CXX) $(CXXFLAGS) nio.o debug.o http.o dns.o download.o -lssl -o download
+nslookup: libnetutil.a  nslookup.o
+	$(CXX) $(CXXFLAGS) nslookup.o libnetutil.a -o nslookup
+wget: libnetutil.a  wget.o
+	$(CXX) $(CXXFLAGS) wget.o -lssl libnetutil.a -o wget
+download: libnetutil.a  download.o
+	$(CXX) $(CXXFLAGS) download.o libnetutil.a  -o download
 
 apt: apt.o aptlist.o debug.o
 	$(CXX) $(CXXFLAGS) apt.o aptlist.o debug.o -o apt
