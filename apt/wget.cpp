@@ -1,16 +1,23 @@
-#include "dns.h"
 #include "defer.h"
+#include "dns.h"
 #include "http.h"
+#include "https.h"
 #include "url.h"
 
-#include <fcntl.h>
 #include <cstdio>
+#include <fcntl.h>
 
 #ifdef CONFIG_HAS_SSL
+template class HttpClientTmpl<SSLSockFd>;
+
 struct Wget {
 public:
-  Wget() = default;
-  Wget(SSL_CTX *ctx) : ctx_(ctx) {}
+  Wget()
+      : s_buf_(), dns_client_(s_buf_), http_client_(s_buf_),
+        https_client_(s_buf_) {}
+  Wget(SSL_CTX *ctx)
+      : s_buf_(), dns_client_(s_buf_), http_client_(s_buf_),
+        https_client_(s_buf_), ctx_(ctx) {}
 
   ~Wget() {
     if (ctx_)
@@ -23,6 +30,7 @@ public:
   int download(const char *url, const char *ofile = nullptr);
 
 private:
+  SharedBuf s_buf_;
   Resolver dns_client_;
   HttpClient http_client_;
   HttpsClient https_client_;
@@ -31,13 +39,12 @@ private:
   static void url_error(const char *fmt, ...) { fprintf(stderr, fmt); }
 
   template <typename _Sock>
-  int download(HttpClientTmpl<_Sock> &client, int ofd,
-    const std::string &host, const std::string &path, 
-    const std::string &method = "GET",
-    const std::string &cookies = "") {
-    
+  int download(HttpClientTmpl<_Sock> &client, int ofd, const std::string &host,
+               const std::string &path, const std::string &method = "GET",
+               const std::string &cookies = "") {
+
     try {
-      auto [tokens, content_len] = client.connect()
+      auto [tokens, content_len] = client.connect();
     } catch (std::runtime_error &ex) {
       dbg.log("wget error: %s\n", ex.what());
       return 1;
@@ -46,8 +53,6 @@ private:
 };
 
 int main(int argc, char **argv) {
-  test_https_main(argc, argv);
-
   SSL_CTX *ctx = SSLSockFd::SSLAllocContext();
   if (!ctx) {
     perror("wget:");
@@ -55,7 +60,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  dbg.on();
   Wget worker(ctx);
+  if (argv[1]) {
+    return worker.download(argv[1]);
+  }
   return 0;
 }
 
@@ -69,9 +78,7 @@ int Wget::download(const char *url, const char *ofile) {
   }
 
   /* Get host name. */
-  unsigned int hostlen = result.host.end - result.host.begin;
-  std::string host(hostlen + 1, (char)0);
-  url_strcpy(host.data(), url, &result.host);
+  std::string host(url + result.host.begin, url + result.host.end);
 
   /* Fix ofile. */
   dbg.log("resolving %s:%d\n", host.c_str(), (int)result.port);
@@ -100,6 +107,7 @@ int Wget::download(const char *url, const char *ofile) {
     return 1;
   }
 
+  int ret = 1;
   dbg.log("saving to %s\n", ofile);
   struct sockaddr saddr;
   for (const auto &addr : addrs) {
@@ -109,38 +117,38 @@ int Wget::download(const char *url, const char *ofile) {
       perror("open");
       continue;
     }
+    FdConsumer file_consumer(ofd);
     int rfd = open_clientfd(&saddr);
     if (rfd < 0) {
-      close(ofd);
       perror("connect:");
       continue;
     }
 
-    int res;
+    int status;
     switch (result.proto) {
     case (PROTO_HTTP): {
       SockFd sfd(rfd);
-      http_client_.connect(sfd, "GET", host, path);
+      status = http_client_.wget(sfd, file_consumer, "GET", host, path);
       break;
     }
     case (PROTO_HTTPS): {
+      SSLSockFd ssfd(rfd, this->ctx_);
+      status = https_client_.wget(ssfd, file_consumer, "GET", host, path);
       break;
     }
     }
 
-    if (res == 0) {
+    if (status / 100 != 5 /* Not the server error. */) {
+      ret = (status == 200) ? 0 /* exit ok */ : 1;
       break;
     }
   }
 
-  /* TODO: download and save. */
-  return 0;
+  return ret;
 }
 
 #else
 
-int main(int argc, char **argv) {
-  return test_http_main(argc, argv);
-}
+int main(int argc, char **argv) { return test_http_main(argc, argv); }
 
 #endif /* CONFIG_HAS_SSL */

@@ -97,7 +97,7 @@ struct NIOBuf {
   }
   /** Discard some bytes in sock output. */
   void skip(size_t nb) { this->reserve_out(nb); }
-  void read(void *buf, size_t len);
+  size_t read(void *buf, size_t len);
   void fill(void);
 
   /**
@@ -254,74 +254,22 @@ struct SockFd {
 };
 
 template <typename _Context>
-void NIOBuf<_Context>::read(void *buf, size_t len) {
+size_t NIOBuf<_Context>::read(void *buf, size_t len) {
+  size_t ret = 0;
   if (out_off_ < out_end_ && len) {
     size_t nr = std::min(len, (size_t)out_end_ - out_off_);
     memcpy(buf, this->out_buf_ + out_off_, nr);
     out_end_ = out_off_ = 0;
     len -= nr;
     buf += nr;
+    ret += nr;
   }
 
   if (len) {
-    this->short_read(buf, len, len);
+    ret += this->short_read(buf, len, len);
   }
+  return ret;
 }
-
-#ifdef CONFIG_HAS_SSL
-#include <openssl/err.h>
-#include <openssl/ssl.h>
-
-struct SSLSockFd {
-  SSLSockFd() = default;
-
-  SSLSockFd(int sockfd, SSL_CTX *ctx) {
-    ssl_ = SSL_new(ctx);
-    if (ssl_) {
-      if (SSL_set_fd(ssl_, sockfd) && SSL_connect(ssl_) == 1) {
-        /* Success. */
-      } else {
-        SSL_free(ssl_);
-        ssl_ = nullptr;
-      }
-    }
-  }
-
-  void close() {
-    if (ssl_) {
-      SSL_shutdown(ssl_);
-      SSL_free(ssl_);
-      ssl_ = nullptr;
-    }
-  }
-
-  bool valid() const { return ssl_; }
-
-  ssize_t read(void *buf, size_t len) {
-    ssize_t nr = SSL_read(ssl_, buf, (int)len);
-    return nr;
-  }
-
-  ssize_t write(const void *buf, size_t len) {
-    ssize_t nw = SSL_write(ssl_, buf, (int)len);
-    return nw;
-  }
-
-  SSL *ssl_{nullptr};
-
-  static SSL_CTX *SSLAllocContext() {
-    SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
-    if (ctx) {
-      SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
-      if (!SSL_CTX_set_default_verify_paths(ctx)) {
-        SSL_CTX_free(ctx);
-        ctx = nullptr;
-      }
-    }
-    return ctx;
-  }
-};
-#endif /* CONFIG_HAS_SSL */
 
 template <typename _Context>
 template <typename _Consumer /* implements consume */>

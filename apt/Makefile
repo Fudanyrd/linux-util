@@ -4,6 +4,7 @@ PROGS += apt-debug
 
 default: $(PROGS)
 all: $(PROGS)
+DEFS = 
 INCLUDES = -include ./debug.h
 CXXFLAGS = -g -fsanitize=address -Wall -O2
 CXXFLAGS += -Wno-pointer-arith
@@ -13,23 +14,23 @@ CXX = g++
 CFLAGS = -g -fsanitize=address -Wall -O2
 
 %.d: %.cpp
-	$(CXX) $(INCLUDES) -E -MD -MF $@ $< >/dev/null
+	$(CXX) $(DEFS) $(INCLUDES) -E -MD -MF $@ $< >/dev/null
 
 %.o: %.cpp %.d
-	$(CXX) $(INCLUDES) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(DEFS) $(INCLUDES) $(CXXFLAGS) -c $< -o $@
 
 %.d: %.c
-	$(CC) -E -MD -MF $@ $< >/dev/null
+	$(CC) $(DEFS) -E -MD -MF $@ $< >/dev/null
 
 %.o: %.c %.d
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(DEFS) $(CFLAGS) -c $< -o $@
 
 .PHONY: clean
 clean:
 	-rm -f *.o *.d *.a $(PROGS)
 
-libnetutil.a: nio.o dns.o http.o debug.o url.o
-	ar rcs libnetutil.a nio.o dns.o http.o debug.o url.o
+libnetutil.a: nio.o dns.o http.o debug.o url.o https.o 
+	ar rcs libnetutil.a nio.o dns.o http.o debug.o url.o https.o 
 
 nslookup: libnetutil.a  nslookup.o
 	$(CXX) $(CXXFLAGS) nslookup.o libnetutil.a -o nslookup
@@ -52,6 +53,7 @@ include dns.d
 include nslookup.d
 include nio.d
 include http.d
+include https.d
 include wget.d
 include url.d
 
