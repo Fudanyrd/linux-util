@@ -9,15 +9,26 @@
 #include "dns.h"
 #include "http.h"
 
+#ifndef EMBEDDED
 static void usage() {
   printf("Usage: apt-download [resource-path] [cookie-file]\n");
 }
+#endif /* EMBEDDED */
 
-int main(int argc, char **argv) {
+#ifdef EMBEDDED
+int download_main(int argc, int ofd, char **argv)
+#else
+int main(int argc, char **argv)
+#endif /* EMBEDDED */
+{
   dbg.on();
   if (!argv[1] || strcmp(argv[1], "--help") == 0) {
+#ifdef EMBEDDED
+    return 1;
+#else
     usage();
     return 0;
+#endif /* EMBEDDED */
   }
   SharedBuf sb;
   if (!sb.in_buf_ || !sb.out_buf_) {
@@ -84,7 +95,11 @@ int main(int argc, char **argv) {
         continue;
       }
 
+#ifdef EMBEDDED
+      FdConsumer consumer(ofd);
+#else
       FdConsumer consumer(1);
+#endif /* EMBEDDED */
       client.consume<FdConsumer>(consumer, content_len);
       client.close();
 

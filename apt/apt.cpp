@@ -1,6 +1,7 @@
 #include "aptlist.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <fstream>
 #include <string.h>
 #include <unistd.h>
@@ -40,14 +41,12 @@ static int debug(int argc, char **argv) {
   return 0;
 }
 
-static int info(int argc, char **argv) {
-  std::unordered_map<string, vector<PackageDetail>> table;
-
+static int init_list(std::unordered_map<string, vector<PackageDetail>> &table) {
   DIR *dir = opendir("/var/lib/apt/lists/");
-  if (chdir("/var/lib/apt/lists/") != 0) {
-    perror("chdir");
-    return 1;
-  }
+
+  char buf[384];
+  strcpy(buf, "/var/lib/apt/lists/");
+  char *append = &buf[19 /* = strlen("/var/lib/apt/lists") */];
   if (!dir) {
     perror("opendir");
     return 1;
@@ -63,12 +62,68 @@ static int info(int argc, char **argv) {
       continue;
     }
 
-    ifstream ifile(fname);
+    strcpy(append, fname);
+    ifstream ifile((const char *)buf);
     dbg.log("Parsing apt list file: %s\n", fname);
     AptParse(ifile, table);
     ifile.close();
   }
   closedir(dir);
+  return 0;
+}
+
+#define EMBEDDED
+#include "download.cpp"
+
+static int download(int argc, char **argv) {
+  std::unordered_map<string, vector<PackageDetail>> table;
+  int ret;
+  if ((ret = init_list(table)) != 0) {
+    return ret;
+  }
+
+  const char *args[3];
+  args[0] = "apt-download";
+  args[1] = args[2] = nullptr;
+
+  for (int i = 2; i < argc; i++) {
+    const char *package = argv[i];
+    APT_ASSERT(package);
+    auto ptr = table.find((const char *)package);
+    if (ptr == table.end()) {
+      fprintf(stderr, "Package: %s Not found\n\n", package);
+      ret = 1;
+      continue;
+    }
+
+    const auto &detail = ptr->second[0];
+    std::string path = "/ubuntu/" + detail.filename_;
+    std::string ofile = package + std::string(".deb");
+    int ofd = open(ofile.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    if (ofd < 0) {
+      perror("open output file");
+      ret = 1;
+      continue;
+    }
+    args[1] = path.c_str();
+    if ((ret = download_main(2, ofd, (char **)args)) != 0) {
+      fprintf(stderr, "Package %s failed download. Stop.\n", package);
+      close(ofd);
+      (void)unlink(ofile.c_str());
+      break;
+    }
+
+    close(ofd);
+  }
+
+  return ret;
+}
+
+static int info(int argc, char **argv) {
+  std::unordered_map<string, vector<PackageDetail>> table;
+  if (init_list(table)) {
+    return 1;
+  }
 
   int ret = 0;
 
@@ -108,6 +163,7 @@ static int help(int argc, char **argv) {
 
 static std::unordered_map<std::string, int (*)(int, char **)> ops = {
     {"info", info},
+    {"download", download},
     {"debug", debug},
     {"help", help},
 };
