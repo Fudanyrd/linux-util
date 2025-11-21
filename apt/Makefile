@@ -4,10 +4,11 @@ PROGS += apt-debug
 
 default: $(PROGS)
 all: $(PROGS)
-DEFS = 
+DEFS = -DCONFIG_HAS_SSL
 INCLUDES = -include ./debug.h
 CXXFLAGS = -g -fsanitize=address -Wall -O2
 CXXFLAGS += -Wno-pointer-arith
+CXXFLAGS += -std=c++17
 
 CC = gcc
 CXX = g++
@@ -39,8 +40,8 @@ wget: libnetutil.a  wget.o
 download: libnetutil.a  download.o
 	$(CXX) $(CXXFLAGS) download.o libnetutil.a  -o download
 
-apt: apt.o aptlist.o debug.o
-	$(CXX) $(CXXFLAGS) apt.o aptlist.o debug.o -o apt
+apt: apt.o aptlist.o libnetutil.a
+	$(CXX) $(CXXFLAGS) apt.o aptlist.o libnetutil.a -o apt
 
 apt-debug: apt
 	@ln -sf $(shell realpath apt) apt-debug
