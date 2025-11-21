@@ -83,6 +83,7 @@ int urlparse(const char *url, struct url_parse *result) {
 
   /* Parse resource path. */
   if (!(*hend)) {
+    result->host.end = hend - url;
     url_str_view empty = {
         .begin = 0,
         .end = 0,

@@ -36,7 +36,7 @@ private:
   HttpsClient https_client_;
   SSL_CTX *ctx_{nullptr};
 
-  static void url_error(const char *fmt, ...) { fprintf(stderr, fmt); }
+  static void url_error(const char *fmt, ...) { fprintf(stderr, "%s", fmt); }
 
   template <typename _Sock>
   int download(HttpClientTmpl<_Sock> &client, int ofd, const std::string &host,
