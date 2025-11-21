@@ -5,10 +5,64 @@
 #include <fstream>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 using std::ifstream;
 using std::string;
 using std::vector;
+
+static const char *AptListDir() {
+  const char *env;
+  if ((env = getenv("APT_LIST_DIR")) != nullptr) {
+    return env;
+  }
+  return "/var/lib/apt/lists";
+}
+
+/**
+ * FIXME: Full list:
+ * for d in jammy-backports jammy-proposed jammy-security jammy-updates jammy;
+ * for f in main multiverse restricted universe;
+ */
+static const char update_script[] = " \n\
+set -e \n\
+for d in jammy; do \n\
+   for f in main multiverse restricted universe; do \n\
+     wget http://archive.ubuntu.com/ubuntu/ubuntu/dists/$d/$f/binary-amd64/Packages.gz -O \"$d-$f.gz\"; \n\
+     gzip -d \"$d-$f.gz\"; \n\
+   done \n\
+done";
+
+static int update(int argc, char **argv, char **envp) {
+  /* Why not use your own wget? (I'm lazy 😭) */
+  /* The `wget` client class is not suitable - it links with -lssl
+   * unnecessary for apt;
+   */
+  pid_t id = fork();
+
+  static const char *update_args[] = {"/bin/busybox", "sh", "-c", update_script,
+                                      0};
+
+  if (id < 0) {
+    perror("fork");
+    return 1;
+  }
+
+  if (id == 0) {
+    /* child */
+    execve(update_args[0], (char *const *)update_args, envp);
+    perror("apt child: execve:");
+    _exit(1);
+  }
+
+  int wstatus;
+  if (waitpid(-1, &wstatus, 0) == -1) {
+    perror("wait:");
+    return 1;
+  }
+
+  return WEXITSTATUS(wstatus);
+}
 
 static bool endswith(const char *s1, const char *end) {
   size_t l = strlen(s1);
@@ -19,7 +73,7 @@ static bool endswith(const char *s1, const char *end) {
   return 0 == strcmp(s1 + (l - le), end);
 }
 
-static int debug(int argc, char **argv) {
+static int debug(int argc, char **argv, char **envp) {
   const char *fname = argv[2];
   if (!fname) {
     printf("missing input file\n");
@@ -42,11 +96,14 @@ static int debug(int argc, char **argv) {
 }
 
 static int init_list(std::unordered_map<string, vector<PackageDetail>> &table) {
-  DIR *dir = opendir("/var/lib/apt/lists/");
+  const char *list_dir = AptListDir();
+  DIR *dir = opendir(list_dir);
 
   char buf[384];
-  strcpy(buf, "/var/lib/apt/lists/");
-  char *append = &buf[19 /* = strlen("/var/lib/apt/lists") */];
+  strcpy(buf, list_dir);
+  char *append = &buf[strlen(list_dir)];
+  *append = '/';
+  append++;
   if (!dir) {
     perror("opendir");
     return 1;
@@ -75,7 +132,7 @@ static int init_list(std::unordered_map<string, vector<PackageDetail>> &table) {
 #define EMBEDDED
 #include "download.cpp"
 
-static int download(int argc, char **argv) {
+static int download(int argc, char **argv, char **envp) {
   std::unordered_map<string, vector<PackageDetail>> table;
   int ret;
   if ((ret = init_list(table)) != 0) {
@@ -119,7 +176,7 @@ static int download(int argc, char **argv) {
   return ret;
 }
 
-static int info(int argc, char **argv) {
+static int info(int argc, char **argv, char **envp) {
   std::unordered_map<string, vector<PackageDetail>> table;
   if (init_list(table)) {
     return 1;
@@ -153,7 +210,7 @@ static int info(int argc, char **argv) {
   return ret;
 }
 
-static int help(int argc, char **argv) {
+static int help(int argc, char **argv, char **envp) {
   printf("Supported operations:\n"
          "  info: list information of a package.\n"
          "  debug: reserved\n"
@@ -161,14 +218,15 @@ static int help(int argc, char **argv) {
   return 0;
 }
 
-static std::unordered_map<std::string, int (*)(int, char **)> ops = {
+static std::unordered_map<std::string, int (*)(int, char **, char **)> ops = {
     {"info", info},
     {"download", download},
     {"debug", debug},
+    {"update", update},
     {"help", help},
 };
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv, char **envp) {
   static short empty_str;
   if (endswith(argv[0], "debug")) {
     dbg.on();
@@ -178,9 +236,9 @@ int main(int argc, char **argv) {
   }
   auto ptr = ops.find(argv[1]);
   if (ptr == ops.end()) {
-    help(argc, argv);
+    help(argc, argv, envp);
     return 1;
   }
 
-  return ptr->second(argc, argv);
+  return ptr->second(argc, argv, envp);
 }
