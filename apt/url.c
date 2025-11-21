@@ -104,5 +104,10 @@ int urlparse(const char *url, struct url_parse *result) {
     result->ofile = view;
   }
 
+  if (result->host.end <= result->host.begin) {
+    result->url_error("empty hostname\n");
+    return 1;
+  }
+
   return 0;
 }
