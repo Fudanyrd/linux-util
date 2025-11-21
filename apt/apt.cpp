@@ -18,6 +18,28 @@ static bool endswith(const char *s1, const char *end) {
   return 0 == strcmp(s1 + (l - le), end);
 }
 
+static int debug(int argc, char **argv) {
+  const char *fname = argv[2];
+  if (!fname) {
+    printf("missing input file\n");
+    return 1;
+  }
+
+  std::unordered_map<string, PackageDetail> table;
+  ifstream ifile(fname);
+  dbg.log("Parsing apt list file: %s\n", fname);
+  AptParse(ifile, table);
+  ifile.close();
+
+  for (const auto &p : table) {
+    printf("Package: %s\n", p.first.c_str());
+    p.second.print(stdout);
+  }
+
+  /* Ok. */
+  return 0;
+}
+
 static int info(int argc, char **argv) {
   std::unordered_map<string, vector<PackageDetail>> table;
 
@@ -79,21 +101,24 @@ static int info(int argc, char **argv) {
 static int help(int argc, char **argv) {
   printf("Supported operations:\n"
          "  info: list information of a package.\n"
+         "  debug: reserved\n"
          "  help: print this help message and exit.\n");
   return 0;
 }
 
 static std::unordered_map<std::string, int (*)(int, char **)> ops = {
     {"info", info},
+    {"debug", debug},
     {"help", help},
 };
 
 int main(int argc, char **argv) {
+  static short empty_str;
   if (endswith(argv[0], "debug")) {
     dbg.on();
   }
   if (!argv[1]) {
-    argv[1] = "";
+    argv[1] = (char *)&empty_str;
   }
   auto ptr = ops.find(argv[1]);
   if (ptr == ops.end()) {

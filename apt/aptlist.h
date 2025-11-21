@@ -2,15 +2,77 @@
 #define _APTLIST_H_ 1
 
 #include <fstream>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "debug.h"
+
+struct ExprNode {
+public:
+  virtual ~ExprNode() = default;
+
+  virtual void print(FILE *file) const = 0;
+  virtual ExprNode *children(void) = 0;
+};
+
+struct ValueNode : public ExprNode {
+public:
+  ValueNode(const std::string &package) : package_(package) {}
+
+  void print(FILE *file) const { fprintf(file, "%s", package_.c_str()); }
+
+  ExprNode *children() { /* no children*/
+    return nullptr;
+  }
+  std::string package_;
+};
+
+struct OperatorNode : public ExprNode {
+public:
+  OperatorNode(const std::string &op, ExprNode *left, ExprNode *right)
+      : op_(op[0]), left_(left), right_(right) {}
+
+  ~OperatorNode() {
+    delete left_;
+    delete right_;
+  }
+
+  void print(FILE *file) const {
+    left_->print(file);
+    if (op_ == ',')
+      fprintf(file, "%c ", op_);
+    else
+      fprintf(file, " %c ", op_);
+    right_->print(file);
+  }
+
+  ExprNode *children() { return left_; }
+
+  int precedence() {
+    if (op_ == '|') {
+      return 2;
+    } else if (op_ == ',') {
+      return 1;
+    } else {
+      APT_ASSERT(false && "Unknown operator");
+    }
+  }
+
+  char op_;
+  ExprNode *left_;
+  ExprNode *right_;
+};
+
 struct PackageDetail {
   PackageDetail() = default;
+  ~PackageDetail() = default;
+
   /* Dependencies. */
-  std::vector<std::string> deps_;
+  std::shared_ptr<ExprNode> deps_{nullptr};
+  std::shared_ptr<ExprNode> pre_deps_{nullptr};
 
   /* File name on the distro server. */
   std::string filename_;
