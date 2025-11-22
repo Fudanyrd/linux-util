@@ -214,6 +214,8 @@ static int help(int argc, char **argv, char **envp) {
   printf("Supported operations:\n"
          "  info: list information of a package.\n"
          "  debug: reserved\n"
+         "  download: Download the binary package into the current directory\n"
+         "  update: update list of available packages\n"
          "  help: print this help message and exit.\n");
   return 0;
 }
