@@ -14,17 +14,11 @@ CC = gcc
 CXX = g++
 CFLAGS = -g -fsanitize=address -Wall -O2
 
-%.d: %.cpp
-	$(CXX) $(DEFS) $(INCLUDES) -E -MD -MF $@ $< >/dev/null
+%.o: %.cpp
+	$(CXX) $(DEFS) $(INCLUDES) $(CXXFLAGS) -MD -c $< -o $@
 
-%.o: %.cpp %.d
-	$(CXX) $(DEFS) $(INCLUDES) $(CXXFLAGS) -c $< -o $@
-
-%.d: %.c
-	$(CC) $(DEFS) -E -MD -MF $@ $< >/dev/null
-
-%.o: %.c %.d
-	$(CC) $(DEFS) $(CFLAGS) -c $< -o $@
+%.o: %.c
+	$(CC) $(DEFS) $(CFLAGS) -MD -c $< -o $@
 
 .PHONY: clean
 clean:
@@ -46,15 +40,5 @@ apt: apt.o aptlist.o libnetutil.a
 apt-debug: apt
 	@ln -sf $(shell realpath apt) apt-debug
 
-include aptlist.d
-include apt.d
-include debug.d
-include download.d
-include dns.d
-include nslookup.d
-include nio.d
-include http.d
-include https.d
-include wget.d
-include url.d
+-include *.d
 
