@@ -20,6 +20,9 @@ struct GUID {
   uint8_t node[6];
 } __attribute__((packed));
 
+#include <stdio.h>
+extern void printGUID(FILE *file, const struct GUID *guid);
+
 struct PartitionConfig {
   struct GUID partType;
   struct GUID partId;
@@ -46,5 +49,12 @@ struct GPTConfig {
  * @return number of partitions actually created.
  */
 extern size_t GPTGenerate(const struct GPTConfig *config);
+
+/**
+ * @param config: a struct with only `buf` set.
+ * @return config[out]: configuration with correctly set fields.
+ * @return 0 on success; EINVAL if format is not valid.
+ */
+extern int GPTParse(struct GPTConfig *config);
 
 #endif // _GPT_H

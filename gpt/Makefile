@@ -17,6 +17,9 @@ QEMU_FLAGS += -m 2G -smp 4 -gdb tcp::1234
 gpt: gpt.o fat.o mkgpt.o
 	@echo "CCLD gpt" && gcc -static -O2 -g $(LDFLAGS) fat.o gpt.o mkgpt.o -o gpt
 
+readgpt: gpt.o readgpt.o
+	@echo "CCLD readgpt" && gcc -static -O2 -g $(LDFLAGS) gpt.o readgpt.o -o readgpt
+
 installer: gpt.o installer.o fat.o
 	@echo CCLD installer && gcc -static -O2 -g $(LDFLAGS) fat.o gpt.o installer.o -o installer
 

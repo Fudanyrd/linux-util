@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -407,3 +408,60 @@ size_t GPTGenerate(const struct GPTConfig *config) {
 
   return ret;
 }
+
+int GPTParse(struct GPTConfig *config) {
+  uint8_t *buf = config->buf, *bootSector = getSector(buf, 0);
+  struct MBR *mbr = (struct MBR *)bootSector;
+  uint16_t signature;
+  _generic_load_le(signature, mbr->signature);
+  if (signature != GPT_SIGNATURE) {
+    fprintf(stderr, "Last 2 byte of mbr is not 55aa\n");
+    return EINVAL;
+  }
+
+  struct GPTHeader *gptHeader = getSector(buf, 1);
+  if (memcmp(gptHeader->signature, "EFI PART", sizeof(gptHeader->signature)) != 0) {
+    fprintf(stderr, "GPT header signature is not 'EFI PART'\n");
+    return EINVAL;
+  }
+  uint32_t numEntries;
+  _generic_load_le(numEntries, gptHeader->numEntries);
+  uint64_t startEntryArray;
+  _generic_load_le(startEntryArray, gptHeader->startEntryArray);
+
+  config->numPart = numEntries;
+  config->partitions = malloc(sizeof(struct PartitionConfig) * numEntries); 
+  if (!config->partitions) {
+    fprintf(stderr, "Cannot allocate memory for partition config\n");
+    return ENOMEM;
+  }
+  struct PartitionEntry *entryArray = getSector(buf, startEntryArray);
+  for (uint32_t i = 0; i < numEntries; i++) {
+    struct PartitionEntry *entry = &entryArray[i];
+    struct PartitionConfig *cp = &config->partitions[i];
+
+    memcpy(&(cp->partType), entry->partType, sizeof(cp->partType));
+    memcpy(&(cp->partId), entry->partId, sizeof(cp->partId));
+
+    uint64_t startLBA, endLBA;
+    _generic_load_le(startLBA, entry->startLBA);
+    _generic_load_le(endLBA, entry->endLBA);
+    cp->startLBA = startLBA;
+    cp->volume = endLBA - startLBA + 1;
+
+    // read partition name
+    char nameBuf[73];
+    int idx = 0;
+    for (int j = 0; j < 72; j += 2) {
+      char ch = entry->partitionName[j];
+      if (ch == 0) {
+        break;
+      }
+      nameBuf[idx++] = ch;
+    }
+    nameBuf[idx] = 0;
+    cp->name = strdup(nameBuf);
+  }
+  return 0;
+}
+
