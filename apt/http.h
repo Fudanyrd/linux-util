@@ -92,7 +92,7 @@ std::pair<std::vector<std::string>, size_t> HttpClientTmpl<_Context>::connect(
   using Token = std::string;
   std::string req_header =
       method + " " + path + " HTTP/1.1\r\nHost: " + host +
-      "\r\nUser-Agent: Mozilla-5.0\r\nConnection: keep-alive\r\n";
+      "\r\nUser-Agent: Mozilla-5.0\r\nConnection: close\r\n";
   req_header += cookies;
 
   buf_.reset(ctx);
