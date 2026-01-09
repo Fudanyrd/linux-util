@@ -1,6 +1,7 @@
 # binaries
 *.iso
 *.o
+*.deb
 *.a
 *.zip
 *.img
