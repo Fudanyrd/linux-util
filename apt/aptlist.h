@@ -8,6 +8,7 @@
 #include <utility>
 #include <set>
 #include <vector>
+#include <functional>
 
 #include "debug.h"
 
@@ -17,7 +18,15 @@ public:
 
   virtual void print(FILE *file) const = 0;
   virtual ExprNode *children(void) = 0;
-  virtual void satisfy(std::set<std::string> &packages) const = 0;
+
+  /**
+   * @param exists: apt has some `virtual` packages but they
+   * cannot be found in lists. 
+   *
+   * @return 0 if can be satisfied.
+   */
+  virtual int satisfy(std::set<std::string> &packages,
+      std::function<bool(const std::string &)> exists) const = 0;
 };
 
 struct ValueNode : public ExprNode {
@@ -30,8 +39,13 @@ public:
     return nullptr;
   }
 
-  void satisfy(std::set<std::string> &packages) const override {
+  int satisfy(std::set<std::string> &packages,
+    std::function<bool(const std::string &)> exists) const override {
+    if (!exists(package_)) { 
+      return 1;
+    }
     packages.insert(package_);
+    return 0;
   }
   std::string package_;
 };
@@ -46,25 +60,30 @@ public:
     delete right_;
   }
 
-  void satisfy(std::set<std::string> &packages) const override {
+  int satisfy(std::set<std::string> &packages,
+    std::function<bool(const std::string &)> exists) const override {
     if (op_ == '|') {
       /* OR operator: satisfy either left or right. */
-      std::set<std::string> left_set;
-      left_->satisfy(left_set);
-      
-      std::set<std::string> right_set;
-      right_->satisfy(right_set);
+#define check_and_satisfy(node) \
+      do {  \
+      std::set<std::string> tempSet; \
+        int ret = node->satisfy(tempSet, exists); \
+        if (ret == 0) { \
+          packages.insert(tempSet.begin(), tempSet.end()); \
+          return 0; \
+        } \
+      } while (0)
 
-      if (left_set.size() <= right_set.size()) {
-        packages.insert(left_set.begin(), left_set.end());
-      } else {
-        packages.insert(right_set.begin(), right_set.end());
-      }
-      
+      check_and_satisfy(left_);
+      check_and_satisfy(right_);
+      return 1;
+#undef check_and_satisfy
+
     } else if (op_ == ',') {
       /* AND operator: satisfy both left and right. */
-      left_->satisfy(packages);
-      right_->satisfy(packages);
+      int ret = left_->satisfy(packages, exists);
+      ret |= right_->satisfy(packages, exists);
+      return ret;
     } else {
       APT_ASSERT(false && "Unknown operator");
     }

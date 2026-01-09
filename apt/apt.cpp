@@ -248,6 +248,10 @@ static int download(int argc, char **argv, char **envp) {
 static int downloadDeps(int argc, char **argv, char **envp) {
 
   std::unordered_map<string, vector<PackageDetail>> table;
+  std::function<bool(const std::string &)> exists =
+      [&](const std::string &package) {
+        return table.find(package) != table.end();
+      };
   int ret = 0;
   if ((ret = init_list(table)) != 0) {
     return ret;
@@ -258,14 +262,14 @@ static int downloadDeps(int argc, char **argv, char **envp) {
     packagesRequired.insert(package);
     auto iter = table.find(package);
     if (iter == table.end()) {
-      fprintf(stderr, "Package: %s Not found\n\n", package);
+      fprintf(stderr, "Package: %s Not found\n\n", package.c_str());
       return;
     }
     PackageDetail &detail = iter->second[0];
     auto exprTree = detail.deps_;
-    if (exprTree) { exprTree->satisfy(packagesRequired); }
+    if (exprTree) { exprTree->satisfy(packagesRequired, exists); }
     exprTree = detail.pre_deps_;
-    if (exprTree) { exprTree->satisfy(packagesRequired); }
+    if (exprTree) { exprTree->satisfy(packagesRequired, exists); }
   };
 
   for (int i = 2; i < argc; i++) {
