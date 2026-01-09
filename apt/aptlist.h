@@ -71,6 +71,7 @@ struct PackageDetail {
   ~PackageDetail() = default;
 
   /* Dependencies. */
+  unsigned char md5sum_[16]{0};
   std::shared_ptr<ExprNode> deps_{nullptr};
   std::shared_ptr<ExprNode> pre_deps_{nullptr};
 

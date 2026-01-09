@@ -155,6 +155,12 @@ std::pair<std::string, PackageDetail> AptParse(std::ifstream &ifile) {
     } else if (startswith("Pre-Depends:", line)) {
       /* FIXME: what is the difference(Pre-Depends:Depends) ? */
       predep = ParseDep(line.c_str() + 12);
+    } else if (startswith("MD5sum:", line)) {
+      const char *md5str = line.c_str() + 8;
+      for (int i = 0; i < 16; i++) {
+        char byte_str[3] = {md5str[i * 2], md5str[i * 2 + 1], 0};
+        detail.md5sum_[i] = static_cast<unsigned char>(strtoul(byte_str, nullptr, 16));
+      }
     }
   }
 

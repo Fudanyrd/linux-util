@@ -5,7 +5,41 @@
 #include <fstream>
 #include <string.h>
 #include <unistd.h>
+#include <sys/file.h>
+#include <cstdio>
 #include <sys/wait.h>
+
+static void dumpMD5sum(FILE *file, const unsigned char *md5sum) {
+  for (int i = 0; i < 16; i++) {
+    fprintf(file , "%02x", md5sum[i]);
+  }
+  fprintf(file, "\n");
+}
+
+static bool md5sumMatch(const char *file, const unsigned char *md5sum) {
+  char cmd[128 * 2], buf[36];
+  sprintf(cmd, "md5sum %s", file);
+  FILE *pf = popen(cmd, "r");
+  if (!pf) {
+    perror("popen md5sum:");
+    return false;
+  }
+  fscanf(pf, "%32s", buf);
+  for (int i = 0; i < 16; i++) {
+    char byte_str[3] = {buf[i * 2], buf[i * 2 + 1], 0};
+    unsigned char byte = static_cast<unsigned char>(strtoul(byte_str, nullptr, 16));
+    if (byte != md5sum[i]) {
+      pclose(pf);
+      fprintf(stderr, "Expected: ");
+      dumpMD5sum(stderr, md5sum);
+      fprintf(stderr, "GOT: %s\n", buf);
+      
+      return false;
+    }
+  }
+  pclose(pf);
+  return true;
+}
 
 using std::ifstream;
 using std::string;
@@ -170,7 +204,15 @@ static int download(int argc, char **argv, char **envp) {
       break;
     }
 
+    (void) fsync(ofd);
     close(ofd);
+    fprintf(stderr, "Checking MD5 sum...\n");
+    if (!md5sumMatch(ofile.c_str(), detail.md5sum_)) {
+      fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
+      (void)unlink(ofile.c_str());
+      ret = 1;
+      break;
+    }
   }
 
   return ret;
@@ -215,6 +257,7 @@ static int help(int argc, char **argv, char **envp) {
          "  info: list information of a package.\n"
          "  debug: reserved\n"
          "  download: Download the binary package into the current directory\n"
+         "  download-dep: Download a package and its dependencies\n"
          "  update: update list of available packages\n"
          "  help: print this help message and exit.\n");
   return 0;
