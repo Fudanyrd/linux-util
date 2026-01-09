@@ -2,13 +2,13 @@
 #define _APTLIST_H_ 1
 
 #include <fstream>
+#include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
-#include <set>
 #include <vector>
-#include <functional>
 
 #include "debug.h"
 
@@ -21,12 +21,13 @@ public:
 
   /**
    * @param exists: apt has some `virtual` packages but they
-   * cannot be found in lists. 
+   * cannot be found in lists.
    *
    * @return 0 if can be satisfied.
    */
-  virtual int satisfy(std::set<std::string> &packages,
-      std::function<bool(const std::string &)> exists) const = 0;
+  virtual int
+  satisfy(std::set<std::string> &packages,
+          std::function<bool(const std::string &)> exists) const = 0;
 };
 
 struct ValueNode : public ExprNode {
@@ -40,8 +41,8 @@ public:
   }
 
   int satisfy(std::set<std::string> &packages,
-    std::function<bool(const std::string &)> exists) const override {
-    if (!exists(package_)) { 
+              std::function<bool(const std::string &)> exists) const override {
+    if (!exists(package_)) {
       return 1;
     }
     packages.insert(package_);
@@ -61,18 +62,18 @@ public:
   }
 
   int satisfy(std::set<std::string> &packages,
-    std::function<bool(const std::string &)> exists) const override {
+              std::function<bool(const std::string &)> exists) const override {
     if (op_ == '|') {
       /* OR operator: satisfy either left or right. */
-#define check_and_satisfy(node) \
-      do {  \
-      std::set<std::string> tempSet; \
-        int ret = node->satisfy(tempSet, exists); \
-        if (ret == 0) { \
-          packages.insert(tempSet.begin(), tempSet.end()); \
-          return 0; \
-        } \
-      } while (0)
+#define check_and_satisfy(node)                                                \
+  do {                                                                         \
+    std::set<std::string> tempSet;                                             \
+    int ret = node->satisfy(tempSet, exists);                                  \
+    if (ret == 0) {                                                            \
+      packages.insert(tempSet.begin(), tempSet.end());                         \
+      return 0;                                                                \
+    }                                                                          \
+  } while (0)
 
       check_and_satisfy(left_);
       check_and_satisfy(right_);

@@ -1,21 +1,20 @@
 #include "aptlist.h"
 
+#include <cstdio>
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
-#include <string.h>
 #include <set>
-#include <unistd.h>
+#include <string.h>
 #include <sys/file.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include <sys/stat.h>
-#include <cstdio>
+#include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 static void dumpMD5sum(FILE *file, const unsigned char *md5sum) {
   for (int i = 0; i < 16; i++) {
-    fprintf(file , "%02x", md5sum[i]);
+    fprintf(file, "%02x", md5sum[i]);
   }
   fprintf(file, "\n");
 }
@@ -31,18 +30,32 @@ static bool md5sumMatch(const char *file, const unsigned char *md5sum) {
   fscanf(pf, "%32s", buf);
   for (int i = 0; i < 16; i++) {
     char byte_str[3] = {buf[i * 2], buf[i * 2 + 1], 0};
-    unsigned char byte = static_cast<unsigned char>(strtoul(byte_str, nullptr, 16));
+    unsigned char byte =
+        static_cast<unsigned char>(strtoul(byte_str, nullptr, 16));
     if (byte != md5sum[i]) {
       pclose(pf);
       fprintf(stderr, "Expected: ");
       dumpMD5sum(stderr, md5sum);
       fprintf(stderr, "GOT: %s\n", buf);
-      
+
       return false;
     }
   }
   pclose(pf);
   return true;
+}
+
+static bool sizeMatch(const char *file, size_t size) {
+  struct stat st;
+  if (stat(file, &st) != 0) {
+    perror("stat:");
+    return false;
+  }
+  return st.st_size == static_cast<off_t>(size);
+}
+
+static bool fileMatch(const char *file, const PackageDetail &detail) {
+  return sizeMatch(file, detail.size_) && md5sumMatch(file, detail.md5sum_);
 }
 
 using std::ifstream;
@@ -170,7 +183,9 @@ static int init_list(std::unordered_map<string, vector<PackageDetail>> &table) {
 #define EMBEDDED
 #include "download.cpp"
 
-static int doDownload(const char *package, const std::unordered_map<string, vector<PackageDetail>> &table) {
+static int
+doDownload(const char *package,
+           const std::unordered_map<string, vector<PackageDetail>> &table) {
   int ret = 0;
 
   const char *args[3];
@@ -193,8 +208,8 @@ static int doDownload(const char *package, const std::unordered_map<string, vect
     struct stat st;
     int fd = open(ofile.c_str(), O_RDONLY);
     if (fd >= 0 && fstat(fd, &st) == 0) {
-      /* check md5sum. */
-      if (md5sumMatch(ofile.c_str(), detail.md5sum_)) {
+      /* check md5sum and size. */
+      if (fileMatch(ofile.c_str(), detail)) {
         /* skip download */
         fprintf(stderr, "Package %s already downloaded.\n", package);
         close(fd);
@@ -218,10 +233,10 @@ static int doDownload(const char *package, const std::unordered_map<string, vect
     return ret;
   }
 
-  (void) fsync(ofd);
+  (void)fsync(ofd);
   close(ofd);
   fprintf(stderr, "Checking MD5 sum...\n");
-  if (!md5sumMatch(ofile.c_str(), detail.md5sum_)) {
+  if (!fileMatch(ofile.c_str(), detail)) {
     fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
     (void)unlink(ofile.c_str());
     ret = 1;
@@ -267,9 +282,13 @@ static int downloadDeps(int argc, char **argv, char **envp) {
     }
     PackageDetail &detail = iter->second[0];
     auto exprTree = detail.deps_;
-    if (exprTree) { exprTree->satisfy(packagesRequired, exists); }
+    if (exprTree) {
+      exprTree->satisfy(packagesRequired, exists);
+    }
     exprTree = detail.pre_deps_;
-    if (exprTree) { exprTree->satisfy(packagesRequired, exists); }
+    if (exprTree) {
+      exprTree->satisfy(packagesRequired, exists);
+    }
   };
 
   for (int i = 2; i < argc; i++) {
@@ -342,12 +361,8 @@ static int help(int argc, char **argv, char **envp) {
 }
 
 static std::unordered_map<std::string, int (*)(int, char **, char **)> ops = {
-    {"info", info},
-    {"download", download},
-    {"download-dep", downloadDeps},
-    {"debug", debug},
-    {"update", update},
-    {"help", help},
+    {"info", info},   {"download", download}, {"download-dep", downloadDeps},
+    {"debug", debug}, {"update", update},     {"help", help},
 };
 
 int main(int argc, char **argv, char **envp) {
