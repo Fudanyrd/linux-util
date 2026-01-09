@@ -254,10 +254,9 @@ static int downloadDeps(int argc, char **argv, char **envp) {
   }
 
   std::set<std::string> packagesRequired;
-  auto doSatisfy = [&](const char *package) {
-    APT_ASSERT(package);
+  auto doSatisfy = [&](const std::string &package) {
     packagesRequired.insert(package);
-    auto iter = table.find((const char *)package);
+    auto iter = table.find(package);
     if (iter == table.end()) {
       fprintf(stderr, "Package: %s Not found\n\n", package);
       return;
@@ -270,8 +269,21 @@ static int downloadDeps(int argc, char **argv, char **envp) {
   };
 
   for (int i = 2; i < argc; i++) {
-    const char *package = argv[i];
+    APT_ASSERT(argv[i]);
+    std::string package = argv[i];
     doSatisfy(package);
+  }
+
+  size_t numPackages = packagesRequired.size();
+  for (;;) {
+    size_t oldValue = numPackages;
+    for (const auto &package : packagesRequired) {
+      doSatisfy(package);
+    }
+    numPackages = packagesRequired.size();
+    if (oldValue == numPackages) {
+      break;
+    }
   }
 
   for (const auto &package : packagesRequired) {
