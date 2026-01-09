@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <set>
 #include <vector>
 
 #include "debug.h"
@@ -16,6 +17,7 @@ public:
 
   virtual void print(FILE *file) const = 0;
   virtual ExprNode *children(void) = 0;
+  virtual void satisfy(std::set<std::string> &packages) const = 0;
 };
 
 struct ValueNode : public ExprNode {
@@ -26,6 +28,10 @@ public:
 
   ExprNode *children() { /* no children*/
     return nullptr;
+  }
+
+  void satisfy(std::set<std::string> &packages) const override {
+    packages.insert(package_);
   }
   std::string package_;
 };
@@ -38,6 +44,30 @@ public:
   ~OperatorNode() {
     delete left_;
     delete right_;
+  }
+
+  void satisfy(std::set<std::string> &packages) const override {
+    if (op_ == '|') {
+      /* OR operator: satisfy either left or right. */
+      std::set<std::string> left_set;
+      left_->satisfy(left_set);
+      
+      std::set<std::string> right_set;
+      right_->satisfy(right_set);
+
+      if (left_set.size() <= right_set.size()) {
+        packages.insert(left_set.begin(), left_set.end());
+      } else {
+        packages.insert(right_set.begin(), right_set.end());
+      }
+      
+    } else if (op_ == ',') {
+      /* AND operator: satisfy both left and right. */
+      left_->satisfy(packages);
+      right_->satisfy(packages);
+    } else {
+      APT_ASSERT(false && "Unknown operator");
+    }
   }
 
   void print(FILE *file) const {

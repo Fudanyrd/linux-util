@@ -4,8 +4,12 @@
 #include <fcntl.h>
 #include <fstream>
 #include <string.h>
+#include <set>
 #include <unistd.h>
 #include <sys/file.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <cstdio>
 #include <sys/wait.h>
 
@@ -166,6 +170,66 @@ static int init_list(std::unordered_map<string, vector<PackageDetail>> &table) {
 #define EMBEDDED
 #include "download.cpp"
 
+static int doDownload(const char *package, const std::unordered_map<string, vector<PackageDetail>> &table) {
+  int ret = 0;
+
+  const char *args[3];
+  args[0] = "apt-download";
+  args[1] = args[2] = nullptr;
+
+  APT_ASSERT(package);
+  auto ptr = table.find((const char *)package);
+  if (ptr == table.end()) {
+    fprintf(stderr, "Package: %s Not found\n\n", package);
+    ret = 1;
+    return ret;
+  }
+
+  const auto &detail = ptr->second[0];
+  std::string path = "/ubuntu/" + detail.filename_;
+  std::string ofile = package + std::string(".deb");
+  do {
+    /* user may have downloaded the deb. Check it. */
+    struct stat st;
+    int fd = open(ofile.c_str(), O_RDONLY);
+    if (fd >= 0 && fstat(fd, &st) == 0) {
+      /* check md5sum. */
+      if (md5sumMatch(ofile.c_str(), detail.md5sum_)) {
+        /* skip download */
+        fprintf(stderr, "Package %s already downloaded.\n", package);
+        close(fd);
+        return 0;
+      }
+    }
+    close(fd);
+  } while (0);
+
+  int ofd = open(ofile.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0666);
+  if (ofd < 0) {
+    perror("open output file");
+    ret = 1;
+    return ret;
+  }
+  args[1] = path.c_str();
+  if ((ret = download_main(2, ofd, (char **)args)) != 0) {
+    fprintf(stderr, "Package %s failed download. Stop.\n", package);
+    close(ofd);
+    (void)unlink(ofile.c_str());
+    return ret;
+  }
+
+  (void) fsync(ofd);
+  close(ofd);
+  fprintf(stderr, "Checking MD5 sum...\n");
+  if (!md5sumMatch(ofile.c_str(), detail.md5sum_)) {
+    fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
+    (void)unlink(ofile.c_str());
+    ret = 1;
+  }
+
+  return ret;
+}
+
 static int download(int argc, char **argv, char **envp) {
   std::unordered_map<string, vector<PackageDetail>> table;
   int ret;
@@ -173,48 +237,46 @@ static int download(int argc, char **argv, char **envp) {
     return ret;
   }
 
-  const char *args[3];
-  args[0] = "apt-download";
-  args[1] = args[2] = nullptr;
+  for (int i = 2; i < argc; i++) {
+    const char *package = argv[i];
+    ret |= doDownload(package, table);
+  }
+
+  return ret;
+}
+
+static int downloadDeps(int argc, char **argv, char **envp) {
+
+  std::unordered_map<string, vector<PackageDetail>> table;
+  int ret = 0;
+  if ((ret = init_list(table)) != 0) {
+    return ret;
+  }
+
+  std::set<std::string> packagesRequired;
+  auto doSatisfy = [&](const char *package) {
+    APT_ASSERT(package);
+    packagesRequired.insert(package);
+    auto iter = table.find((const char *)package);
+    if (iter == table.end()) {
+      fprintf(stderr, "Package: %s Not found\n\n", package);
+      return;
+    }
+    PackageDetail &detail = iter->second[0];
+    auto exprTree = detail.deps_;
+    if (exprTree) { exprTree->satisfy(packagesRequired); }
+    exprTree = detail.pre_deps_;
+    if (exprTree) { exprTree->satisfy(packagesRequired); }
+  };
 
   for (int i = 2; i < argc; i++) {
     const char *package = argv[i];
-    APT_ASSERT(package);
-    auto ptr = table.find((const char *)package);
-    if (ptr == table.end()) {
-      fprintf(stderr, "Package: %s Not found\n\n", package);
-      ret = 1;
-      continue;
-    }
-
-    const auto &detail = ptr->second[0];
-    std::string path = "/ubuntu/" + detail.filename_;
-    std::string ofile = package + std::string(".deb");
-    int ofd = open(ofile.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0666);
-    if (ofd < 0) {
-      perror("open output file");
-      ret = 1;
-      continue;
-    }
-    args[1] = path.c_str();
-    if ((ret = download_main(2, ofd, (char **)args)) != 0) {
-      fprintf(stderr, "Package %s failed download. Stop.\n", package);
-      close(ofd);
-      (void)unlink(ofile.c_str());
-      break;
-    }
-
-    (void) fsync(ofd);
-    close(ofd);
-    fprintf(stderr, "Checking MD5 sum...\n");
-    if (!md5sumMatch(ofile.c_str(), detail.md5sum_)) {
-      fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
-      (void)unlink(ofile.c_str());
-      ret = 1;
-      break;
-    }
+    doSatisfy(package);
   }
 
+  for (const auto &package : packagesRequired) {
+    ret |= doDownload(package.c_str(), table);
+  }
   return ret;
 }
 
@@ -266,6 +328,7 @@ static int help(int argc, char **argv, char **envp) {
 static std::unordered_map<std::string, int (*)(int, char **, char **)> ops = {
     {"info", info},
     {"download", download},
+    {"download-dep", downloadDeps},
     {"debug", debug},
     {"update", update},
     {"help", help},
