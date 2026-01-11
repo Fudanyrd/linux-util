@@ -1,4 +1,4 @@
-PROGS = nslookup wget download
+PROGS = 
 PROGS += apt
 PROGS += apt-debug
 
@@ -9,6 +9,7 @@ INCLUDES = -include ./debug.h
 CXXFLAGS = -g -fsanitize=address -Wall -O2
 CXXFLAGS += -Wno-pointer-arith
 CXXFLAGS += -std=c++17
+CXXFLAGS += -I./libhttpd
 
 CC = gcc
 CXX = g++
@@ -23,22 +24,23 @@ CFLAGS = -g -fsanitize=address -Wall -O2
 .PHONY: clean
 clean:
 	-rm -f *.o *.d *.a $(PROGS)
-
-libnetutil.a: nio.o dns.o http.o debug.o url.o https.o 
-	ar rcs libnetutil.a nio.o dns.o http.o debug.o url.o https.o 
-
-nslookup: libnetutil.a  nslookup.o
-	$(CXX) $(CXXFLAGS) nslookup.o libnetutil.a -o nslookup
-wget: libnetutil.a  wget.o
-	$(CXX) $(CXXFLAGS) wget.o -lssl libnetutil.a -o wget
-download: libnetutil.a  download.o
-	$(CXX) $(CXXFLAGS) download.o libnetutil.a  -o download
-
-apt: apt.o aptlist.o libnetutil.a
-	$(CXX) $(CXXFLAGS) apt.o aptlist.o libnetutil.a -o apt
+	-make -C libhttpd clean
 
 apt-debug: apt
 	@ln -sf $(shell realpath apt) apt-debug
 
 -include *.d
 
+SRCS := $(wildcard *.cpp)
+OBJS := $(SRCS:.cpp=.o)
+SRCS += url.c
+OBJS += url.o
+
+libhttpd/libhttpd.a:
+	$(MAKE) -C libhttpd
+
+apt: $(OBJS) libhttpd/libhttpd.a
+	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -ldl -lssl -lcrypto -L./libhttpd -lhttpd
+
+debug:
+	echo $(OBJS)

@@ -12,6 +12,32 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <httpd.h>
+
+static HttpClient *client;
+
+struct AptClientHandler : public HttpClientHandler {
+  int ofd;
+
+public:
+  AptClientHandler(const std::vector<char> &host) : HttpClientHandler(host) {}
+  bool consume(const void *b, size_t length) override {
+    if (ofd < 0) {
+      http_assert(0 && "invalid file descriptor");
+    }
+    ssize_t ret = Socket::xwrite(ofd, (const char *)b, length);
+    return ret == static_cast<ssize_t>(length);
+  }
+};
+
+static AptClientHandler *handler;
+
+static int download_main(int ofd, const char *pathStr, bool isLast) {
+  dbg.log("Downloading %s\n", pathStr);
+  std::vector<char> path(pathStr, pathStr + strlen(pathStr) + 1);
+  return client->request(HttpMethodType::GET, path, isLast);
+}
+
 static void dumpMD5sum(FILE *file, const unsigned char *md5sum) {
   for (int i = 0; i < 16; i++) {
     fprintf(file, "%02x", md5sum[i]);
@@ -180,12 +206,10 @@ static int init_list(std::unordered_map<string, vector<PackageDetail>> &table) {
   return 0;
 }
 
-#define EMBEDDED
-#include "download.cpp"
-
 static int
 doDownload(const char *package,
-           const std::unordered_map<string, vector<PackageDetail>> &table) {
+           const std::unordered_map<string, vector<PackageDetail>> &table,
+           bool isLast) {
   int ret = 0;
 
   const char *args[3];
@@ -225,8 +249,8 @@ doDownload(const char *package,
     ret = 1;
     return ret;
   }
-  args[1] = path.c_str();
-  if ((ret = download_main(2, ofd, (char **)args)) != 0) {
+  handler->ofd = ofd;
+  if ((ret = download_main(ofd, (const char *)path.c_str(), isLast)) != 0) {
     fprintf(stderr, "Package %s failed download. Stop.\n", package);
     close(ofd);
     (void)unlink(ofile.c_str());
@@ -235,6 +259,7 @@ doDownload(const char *package,
 
   (void)fsync(ofd);
   close(ofd);
+  handler->ofd = -1;
   fprintf(stderr, "Checking MD5 sum...\n");
   if (!fileMatch(ofile.c_str(), detail)) {
     fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
@@ -252,9 +277,13 @@ static int download(int argc, char **argv, char **envp) {
     return ret;
   }
 
-  for (int i = 2; i < argc; i++) {
+  for (int i = 3; i < argc; i++) {
     const char *package = argv[i];
-    ret |= doDownload(package, table);
+    ret |= doDownload(package, table, false);
+  }
+  {
+    const char *package = argv[2];
+    ret |= doDownload(package, table, true);
   }
 
   return ret;
@@ -309,8 +338,16 @@ static int downloadDeps(int argc, char **argv, char **envp) {
     }
   }
 
-  for (const auto &package : packagesRequired) {
-    ret |= doDownload(package.c_str(), table);
+  {
+    auto it = packagesRequired.begin();
+    for (it++; it != packagesRequired.end(); it++) {
+      const auto &package = *it;
+      ret |= doDownload(package.c_str(), table, false);
+    }
+  }
+  {
+    auto it = packagesRequired.begin();
+    ret |= doDownload((*it).c_str(), table, true);
   }
   return ret;
 }
@@ -373,11 +410,22 @@ int main(int argc, char **argv, char **envp) {
   if (!argv[1]) {
     argv[1] = (char *)&empty_str;
   }
+
+  const char *hostStr = "archive.ubuntu.com";
+  std::vector<char> host(hostStr, hostStr + strlen(hostStr) + 1);
+  HttpSocket socket;
+  HttpClientProvider provider(hostStr);
+  handler = new AptClientHandler(host);
+  client = new HttpClient(host, socket, provider, *handler);
+
   auto ptr = ops.find(argv[1]);
   if (ptr == ops.end()) {
     help(argc, argv, envp);
     return 1;
   }
 
-  return ptr->second(argc, argv, envp);
+  int ret = ptr->second(argc, argv, envp);
+  delete client;
+  delete handler;
+  return ret;
 }
