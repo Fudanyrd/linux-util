@@ -536,7 +536,7 @@ int HttpClient::request(HttpMethodType method, std::vector<char> path,
     nr -= offset;
     nr = std::min(nr, contentLength);
     /* handles bytes in the buffer. */
-    if (handler.consume(buffer + offset, nr)) {
+    if (handler.consume((const char *)buffer + offset, nr)) {
       for (; nr < contentLength;) {
         auto res = socket.read(buffer, std::min(size, contentLength - nr));
         if (res <= 0) {
