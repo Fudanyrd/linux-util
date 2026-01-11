@@ -290,7 +290,7 @@ static int download(int argc, char **argv, char **envp) {
     const char *package = argv[i];
     ret |= doDownload(package, table, false);
   }
-  {
+  if (argc >= 3) {
     const char *package = argv[2];
     ret |= doDownload(package, table, true);
   }
@@ -308,6 +308,11 @@ static int downloadDeps(int argc, char **argv, char **envp) {
   int ret = 0;
   if ((ret = init_list(table)) != 0) {
     return ret;
+  }
+
+  if (argc == 2) {
+    fprintf(stderr, "No package specified.\n");
+    return 1;
   }
 
   std::set<std::string> packagesRequired;
