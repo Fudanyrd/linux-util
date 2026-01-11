@@ -3,6 +3,7 @@ apt
 apt-debug
 download
 nslookup
+libhttpd/test
 demo.py
 *.d
 

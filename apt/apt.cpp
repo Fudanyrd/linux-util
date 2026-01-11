@@ -14,6 +14,8 @@
 
 #include <httpd.h>
 
+#define APT_MAX_RETRIES 3
+
 static HttpClient *client;
 
 struct AptClientHandler : public HttpClientHandler {
@@ -35,7 +37,14 @@ static AptClientHandler *handler;
 static int download_main(int ofd, const char *pathStr, bool isLast) {
   dbg.log("Downloading %s\n", pathStr);
   std::vector<char> path(pathStr, pathStr + strlen(pathStr) + 1);
-  return client->request(HttpMethodType::GET, path, isLast);
+  int ret = 1;
+  for (int i = 0; i < APT_MAX_RETRIES; i++) {
+    ret = client->request(HttpMethodType::GET, path, isLast);
+    if (ret == 0) {
+      break;
+    }
+  }
+  return ret;
 }
 
 static void dumpMD5sum(FILE *file, const unsigned char *md5sum) {
