@@ -511,6 +511,8 @@ int HttpClient::request(HttpMethodType method, std::vector<char> path,
   HttpHeadParser<HttpHeadReader> parser(&reader, table);
   parser.parse();
   if (!parser.isValid()) {
+    fprintf(stderr, HTTP_ERROR_STR " failed to parser header: %s\n", 
+            strerror(reader.getError()));
     doClose;
     return 1;
   }
@@ -558,7 +560,7 @@ int HttpClient::request(HttpMethodType method, std::vector<char> path,
   } else { /* con remains unchanged. */
   }
 
-  if (con == HttpConnectionType::CLOSE) {
+  if (con == HttpConnectionType::CLOSE || !success) {
     doClose;
   } else {
     /* reuse the connection. */

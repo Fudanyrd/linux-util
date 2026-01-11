@@ -16,3 +16,7 @@ test: httpd-test.o libhttpd.a
 
 -include *.d
 
+.PHONY: clean
+clean:
+	-rm -f *.o *.a test *.d
+

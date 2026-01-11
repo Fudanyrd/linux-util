@@ -213,7 +213,9 @@ public:
   void reset(_Socket_t *sock) {
     this->socket = sock;
     offset = end = 0;
+    error = 0;
   }
+  int getError() const { return error; }
   void reset(_Socket_t &sock) { reset(&sock); }
 
   int getLastError() {
@@ -301,6 +303,12 @@ public:
     std::vector<char> line;
     char buf[64]; /* assume that key is less than 64 bytes. */
 
+    auto printLine = [](const std::vector<char> &line) {
+      fprintf(stderr, "< ");
+      fwrite(line.data(), 1, line.size(), stderr);
+      fprintf(stderr, "\n");
+    };
+
     /* Deal with the request line. */
     do {
       line = reader->nextLine();
@@ -383,7 +391,7 @@ public:
 
   static Connection connFromString(const char *s) {
     return (*s == 0 /* client didn't specify */
-            || strcmp(s, "close") == 0)
+            || strcasecmp(s, "close") == 0)
                ? Connection::CLOSE
                : Connection::KEEP_ALIVE;
   }
