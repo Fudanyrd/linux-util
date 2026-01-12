@@ -57,6 +57,8 @@ bool AptListFile::match(const char *file) const {
   size_t j;
   int tokens = 0;
 
+  /* FIXME: also compare ^0, ^1 against uri. */
+
   /* security.ubuntu.com_ubuntu_dists_jammy-security_main_bin... */
   /* ^0                  ^1     ^2    ^3             ^4*/
   /**
