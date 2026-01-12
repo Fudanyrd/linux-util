@@ -20,18 +20,28 @@
   classname &operator=(const classname &other) = delete;                       \
   classname(const classname &other) = delete;
 
+/**
+ * See <strong>sources.list</strong>(5) for the apt source list format.
+ *
+ * <p>We only implemented parsing for its "one-line style" format.</p>
+ */
 struct AptListFile {
   std::unordered_map<std::string, std::vector<PackageDetail>> table;
 
-  std::vector<char> url; /* archive.ubuntu.com */
-  std::string base;      /* ubuntu */
+  std::string uri;
+  std::string suite;
+  std::string component;
 
   AptListFile &operator=(AptListFile &&other) = default;
   AptListFile(AptListFile &&other) = default;
   APT_DISALLOW_COPY(AptListFile)
 
   ~AptListFile() = default;
-  AptListFile(const char *dirname, const char *file);
+  AptListFile() = default;
+  AptListFile(const std::string &u, const std::string s, const std::string &c)
+      : uri(u), suite(s), component(c) {}
+  static void fromLine(std::vector<AptListFile> &files,
+                       const std::string &line);
 
   bool match(const char *file) const;
   void parse(const char *dirname, const char *file) {
@@ -43,43 +53,109 @@ struct AptListFile {
 };
 
 bool AptListFile::match(const char *file) const {
-  const char *substr1 = strchr(file, '_');
-  if (!substr1) {
-    return false;
-  }
-  const char *substr2 = strchr(substr1 + 1, '_');
-  if (!substr2) {
-    return false;
-  }
+  size_t i = 0;
+  size_t j;
+  int tokens = 0;
 
-  std::string file_url(file, substr1);
-  if (strncmp(url.data(), file, url.size())) {
-    return false;
-  }
-
-  std::string file_base(substr1 + 1, substr2);
-  file_base = "/" + file_base + "/";
-  if (file_base != base) {
-    return false;
+  /* security.ubuntu.com_ubuntu_dists_jammy-security_main_bin... */
+  /* ^0                  ^1     ^2    ^3             ^4*/
+  /**
+   * Split file by '_',
+   * and check token[3] == suite && token[4] == component
+   */
+  while (file[i]) {
+    j = i;
+    while (file[j] && file[j] != '_') {
+      j++;
+    }
+#define thisToken std::string(file + i, file + j)
+    if (tokens == 3) {
+      if (thisToken != suite) {
+        return false;
+      }
+    } else if (tokens == 4) {
+      if (thisToken != component) {
+        return false;
+      }
+    }
+    tokens++;
+    if (file[j] == 0 || tokens > 4) {
+      break;
+    }
+    i = j + 1;
+#undef thisToken
   }
 
   return true;
 }
 
-AptListFile::AptListFile(const char *dirname, const char *file) {
-  const char *substr1 = strchr(file, '_');
-  APT_ASSERT(substr1 != nullptr);
-  const char *substr2 = strchr(substr1 + 1, '_');
-  APT_ASSERT(substr2 != nullptr);
+/**
+ * Initialize this object by a line in
+ * <strong>sources.list</strong>(5).
+ *
+ * @param line
+ */
+void AptListFile::fromLine(std::vector<AptListFile> &files,
+                           const std::string &line) {
+  const char *ptr = line.c_str();
+  if (strncmp(ptr, "deb", 3) != 0) {
+    return;
+  }
+  if (strncmp(ptr, "deb-src", 7) == 0) {
+    /* ignored */
+    return;
+  }
 
-  url = std::vector<char>(file, substr1);
-  url.push_back(0);
+  /*
+   * Example of line:
+   * deb http://archive.ubuntu.com/ubuntu/ jammy-backports main
+   *     ^uri                              ^suite          ^component
+   */
 
-  base = "/";
-  base += std::string(substr1 + 1, substr2);
-  base += "/";
+  auto appendNextToken = [](const char *str,
+                            std::string &dest) -> const char * {
+    char ch = *str;
+    while (ch && isspace(ch)) {
+      str++;
+      ch = *str;
+    }
+    while (ch && !isspace(ch)) {
+      dest.push_back(ch), str++;
+      ch = *str;
+    }
+    return str;
+  };
 
-  parse(dirname, file);
+  ptr += 4; /* skip "deb " */
+  std::string uri, suite, component;
+  ptr = appendNextToken(ptr, uri);
+  if (uri.front() == '[') {
+    /* Possibly skip */
+    while (uri.back() != ']') {
+      ptr = appendNextToken(ptr, uri);
+      if (uri.empty()) {
+        break;
+      }
+    }
+    uri.clear();
+    ptr = appendNextToken(ptr, uri);
+  }
+  ptr = appendNextToken(ptr, suite);
+  ptr = appendNextToken(ptr, component);
+
+  if (uri.empty() || suite.empty() || component.empty()) {
+    fprintf(stderr, "ERROR parsing: \"%s\"\n", line.c_str());
+    return;
+  }
+  files.push_back(AptListFile(uri, suite, component));
+  for (;;) {
+    component.clear();
+    ptr = appendNextToken(ptr, component);
+    if (component.empty()) {
+      break;
+    }
+    files.push_back(AptListFile(uri, suite, component));
+  }
 }
 
 struct AptClientHandler : public HttpClientHandler {
@@ -110,35 +186,17 @@ private:
 
   std::vector<AptListFile> files;
 
-  struct ClientStruct {
-    AptClientHandler handler;
-    HttpSocket socket;
-    HttpClientProvider provider;
-    HttpClient client;
-
-    ClientStruct(const std::vector<char> &host)
-        : handler(host.data()), socket(), provider(host.data(), 80),
-          client(socket, provider, handler) {}
-  };
-
-  ClientStruct *clients;
-
-  typedef std::function<int(const AptListFile &, 
-    const std::vector<PackageDetail> &, HttpClient &)> callbackType;
+  typedef std::function<int(const AptListFile &,
+                            const std::vector<PackageDetail> &)>
+      callbackType;
 
 public:
   Apt(const char *directory);
-  ~Apt() {
-    size_t len = files.size();
-    for (size_t i = 0; i < len; i++) {
-      clients[i].~ClientStruct();
-    }
-    ::free(clients);
-  }
+  ~Apt() = default;
 
   /**
    * Find a package and perform action on it.
-   * 
+   *
    * @param callback a return-0-on-success function.
    * @return 0 on success; ENOENT if no such package.
    */
@@ -157,7 +215,7 @@ int Apt::find(const std::string &package, callbackType callback) {
     if (iter == file.table.end()) {
       continue;
     } else {
-      return callback(file, iter->second, clients[i].client);
+      return callback(file, iter->second);
     }
   }
 
@@ -166,7 +224,54 @@ int Apt::find(const std::string &package, callbackType callback) {
 }
 
 Apt::Apt(const char *dir) {
-  files.reserve(4);
+  files.reserve(4 * 3);
+
+  do {
+    const char *file = getenv("APT_SOURCES_LIST");
+    if (file == nullptr) {
+      file = "/etc/apt/sources.list";
+    }
+
+    auto doParse = [](std::ifstream &sources, std::vector<AptListFile> &files) {
+      std::string line;
+      while (std::getline(sources, line)) {
+        if (line.empty()) {
+          continue;
+        }
+        AptListFile::fromLine(files, line);
+      }
+      sources.close();
+    };
+    std::ifstream sources(file);
+    dbg.log("parsing sources.list ...\n");
+    doParse(sources, this->files);
+
+    /* Parse files in APT_SOURCES_LIST_D (default to /etc/apt/sources.list.d) */
+    const char *dir = getenv("APT_SOURCES_LIST_D");
+    if (!dir) {
+      dir = "/etc/apt/sources.list.d";
+    }
+    DIR *dirp = opendir(dir);
+    if (!dirp) {
+      /* no such dir */
+      break;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(dirp)) != NULL) {
+      const char *fname = entry->d_name;
+      /* check whether fname ends with .list: */
+      size_t len = strlen(fname);
+      if (len < 5 || strcmp(fname + len - 5, ".list")) {
+        continue;
+      }
+
+      std::string filepath = std::string(dir) + "/" + fname;
+      std::ifstream ifile(filepath.c_str());
+      dbg.log("parsing sources.list.d/%s ...\n", fname);
+      doParse(ifile, this->files);
+    }
+    closedir(dirp);
+  } while (0);
 
   DIR *dirp = opendir(dir);
   struct dirent *entry;
@@ -182,23 +287,14 @@ Apt::Apt(const char *dir) {
     auto *aptFile = searchByFileName(fname);
     dbg.log("Parsing list file %s ...\n", fname);
     if (aptFile == nullptr) {
-      this->files.push_back(AptListFile(dir, fname));
+      dbg.log("Failed to match for file %s\n", fname);
+      continue;
     } else {
       aptFile->parse(dir, fname);
     }
   }
-  closedir(dirp);
 
-  size_t len = files.size();
-  clients = (ClientStruct *)malloc(sizeof(ClientStruct) * len);
-  if (clients == nullptr) {
-    perror("malloc");
-    _exit(124);
-  }
-  for (size_t i = 0; i < len; i++) {
-    const auto &host = files[i].url;
-    new (&clients[i]) ClientStruct(host);
-  }
+  closedir(dirp);
 }
 
 static Apt *apt;
@@ -337,25 +433,16 @@ static int debug(int argc, char **argv, char **envp) {
   return 0;
 }
 
-static int
-doDownload(const std::string &package,
-           bool isLast) {
+static int doDownload(const std::string &package, bool isLast) {
   int ret = 0;
 
   APT_ASSERT(apt);
 
   const std::string &packageStr = package;
-  auto downloadCallback = [&packageStr, isLast](
-      const AptListFile &file, const std::vector<PackageDetail>& details, HttpClient &client) -> int {
-
+  auto downloadCallback =
+      [&packageStr, isLast](const AptListFile &file,
+                            const std::vector<PackageDetail> &details) -> int {
     const auto &detail = details[0];
-    auto *handler = dynamic_cast<AptClientHandler *>(client.getHandler());
-    std::vector<char> path;
-    do {
-      std::string pathStr = file.base + detail.filename_;
-      path = std::vector<char>(pathStr.begin(), pathStr.end());
-      path.push_back(0);
-    } while (0);
     std::string ofile = packageStr + ".deb";
 
     int ret;
@@ -374,32 +461,38 @@ doDownload(const std::string &package,
       }
       close(fd);
     } while (0);
- 
-    int ofd = open(ofile.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0666);
-    if (ofd < 0) {
-      perror("open output file");
-      ret = 1;
-      return ret;
+
+    dbg.log("Downloading package %s\n", packageStr.c_str());
+    if (fork() == 0) {
+      std::string uri = file.uri;
+      if (uri.back() != '/') {
+        uri += "/";
+      }
+      uri += detail.filename_;
+      /* both GNU wget and busybox wget supports -q. */
+      execlp("wget", "wget", uri.c_str(), "-q", "-O", ofile.c_str(), nullptr);
+      perror("execlp");
+      _exit(12);
+    } else {
+      int wstatus;
+      if (waitpid(-1, &wstatus, 0) == -1) {
+        perror("wait:");
+        return 1;
+      }
+      ret = WEXITSTATUS(wstatus);
+      if (ret != 0) {
+        fprintf(stderr, "Failed to download package %s\n", packageStr.c_str());
+        return ret;
+      }
     }
-    handler->ofd = ofd;
-    dbg.log("Downloading package %s ...\n", packageStr.c_str()); 
-    if ((ret = client.request(HttpMethodType::GET, path, isLast)) != 0) {
-      fprintf(stderr, "Package %s failed download. Stop.\n", packageStr.c_str());
-      close(ofd);
-      (void)unlink(ofile.c_str());
-      return ret;
-    }
- 
-    (void)fsync(ofd);
-    close(ofd);
-    handler->ofd = -1;
+
     dbg.log("Checking MD5 sum...\n");
     if (!fileMatch(ofile.c_str(), detail)) {
       fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
       (void)unlink(ofile.c_str());
       ret = 1;
     }
- 
+
     return ret;
   };
 
@@ -426,8 +519,8 @@ static int download(int argc, char **argv, char **envp) {
 }
 
 static bool packageExists(const std::string &package) {
-  auto checkExistCallback = [](
-    const AptListFile &file, const std::vector<PackageDetail>&, HttpClient&) -> int {
+  auto checkExistCallback = [](const AptListFile &file,
+                               const std::vector<PackageDetail> &) -> int {
     return 0;
   };
 
@@ -435,8 +528,7 @@ static bool packageExists(const std::string &package) {
 }
 
 static int downloadDeps(int argc, char **argv, char **envp) {
-  std::function<bool(const std::string &)> exists =
-    packageExists;
+  std::function<bool(const std::string &)> exists = packageExists;
 
   int ret = 0;
   if (argc == 2) {
@@ -445,8 +537,9 @@ static int downloadDeps(int argc, char **argv, char **envp) {
   }
 
   std::set<std::string> packagesRequired;
-  auto addDepsCallback = [&packagesRequired, &exists](
-    const AptListFile &file, const std::vector<PackageDetail>& details, HttpClient&) {
+  auto addDepsCallback = [&packagesRequired,
+                          &exists](const AptListFile &file,
+                                   const std::vector<PackageDetail> &details) {
     const auto &detail = details[0];
     auto exprTree = detail.deps_;
     if (exprTree) {
@@ -499,9 +592,9 @@ static int info(int argc, char **argv, char **envp) {
   int ret = 0;
   for (int i = 2; i < argc; i++) {
     const char *arg = argv[i];
-    auto infoCallback = [arg](
-      const AptListFile &file, const std::vector<PackageDetail>& details, HttpClient&) -> int {
-
+    auto infoCallback =
+        [arg](const AptListFile &file,
+              const std::vector<PackageDetail> &details) -> int {
       const auto size = details.size();
       if (size > 1) {
         fprintf(stdout, "Package %s has %zu records:\n", arg, size);
@@ -516,7 +609,9 @@ static int info(int argc, char **argv, char **envp) {
     };
 
     int r = apt->find(arg, infoCallback);
-    if (r == ENOENT) { fprintf(stderr, "Package %s not found.\n", arg); }
+    if (r == ENOENT) {
+      fprintf(stderr, "Package %s not found.\n", arg);
+    }
     ret |= r;
   }
   return ret;
