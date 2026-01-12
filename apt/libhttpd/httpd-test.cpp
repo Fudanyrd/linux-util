@@ -337,7 +337,7 @@ static void testHttpClient() {
 
   HttpClientProvider provider(hostStr);
   CountingClientHandler handler(host);
-  HttpClient client(host, socket, provider, handler);
+  HttpClient client(socket, provider, handler);
 
   testClientTmpl(client, handler, hostStr,
                  "curl -s http://archive.ubuntu.com/ | wc -c");
@@ -350,7 +350,7 @@ static void testHttpsClient() {
 
   SSLClientProvider provider(hostStr);
   CountingClientHandler handler(host);
-  HttpClient client(host, socket, provider, handler);
+  HttpClient client(socket, provider, handler);
 
   testClientTmpl(client, handler, hostStr,
                  "curl -s https://jyywiki.cn/ | wc -c");

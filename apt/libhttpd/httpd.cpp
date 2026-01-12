@@ -511,7 +511,7 @@ int HttpClient::request(HttpMethodType method, std::vector<char> path,
   HttpHeadParser<HttpHeadReader> parser(&reader, table);
   parser.parse();
   if (!parser.isValid()) {
-    fprintf(stderr, HTTP_ERROR_STR " failed to parser header: %s\n", 
+    fprintf(stderr, HTTP_ERROR_STR " failed to parser header: %s\n",
             strerror(reader.getError()));
     doClose;
     return 1;

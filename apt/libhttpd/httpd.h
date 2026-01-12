@@ -605,16 +605,19 @@ void renderDirectory(SocketStream &socket, const char *path);
 
 struct HttpClientHandler : public HttpHandler {
 private:
-  std::vector<char> host;
+  const char *host;
   HttpConnectionType connection;
 
 public:
   HttpClientHandler(const std::vector<char> &myHost)
-      : host(myHost), connection(HttpConnectionType::CLOSE) {
+      : host(myHost.data()), connection(HttpConnectionType::CLOSE) {
 
-    http_assert(host.size() && host.back() == 0 &&
+    http_assert(myHost.size() && myHost.back() == 0 &&
                 "host is not null-terminated");
   }
+
+  HttpClientHandler(const char *myHost)
+      : host(myHost), connection(HttpConnectionType::CLOSE) {}
 
   void setConnection(HttpConnectionType conn) override {
     this->connection = conn;
@@ -648,7 +651,7 @@ public:
     stream << " HTTP/1.1\r\n";
 
     stream << "Host: ";
-    stream.write(host.data(), host.size() - 1);
+    stream << this->host;
 
     switch (connection) {
     case (HttpConnectionType::CLOSE):
@@ -696,7 +699,6 @@ using HttpClientSocket = HttpSocket;
 class HttpClient {
 private:
   HttpHeadReader reader;
-  std::vector<char> host;
   Socket &socket;
   ClientProvider &provider;
   HttpClientHandler &handler;
@@ -707,10 +709,10 @@ private:
   }
 
 public:
-  HttpClient(const std::vector<char> &myHost, Socket &mySocket,
-             ClientProvider &myProvider, HttpClientHandler &myHandler)
-      : reader(), host(myHost), socket(mySocket), provider(myProvider),
-        handler(myHandler), connected(false) {}
+  HttpClient(Socket &mySocket, ClientProvider &myProvider,
+             HttpClientHandler &myHandler)
+      : reader(), socket(mySocket), provider(myProvider), handler(myHandler),
+        connected(false) {}
   int request(HttpMethodType method, std::vector<char> path, bool isLast);
 
   ~HttpClient() {
