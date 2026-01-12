@@ -199,8 +199,6 @@ void AptParse(
 
 void PackageDetail::print(FILE *ofile) const {
   fprintf(ofile, "Filename: %s\n", this->filename_.c_str());
-  fprintf(ofile, "Url: http://archive.ubuntu.com/ubuntu/%s \n",
-          this->filename_.c_str());
   fprintf(ofile, "Depends: ");
   if (this->deps_) {
     deps_->print(ofile);
@@ -208,6 +206,10 @@ void PackageDetail::print(FILE *ofile) const {
   fprintf(ofile, "\nPre-Depends: ");
   if (this->pre_deps_) {
     pre_deps_->print(ofile);
+  }
+  fprintf(ofile, "\nMD5sum: ");
+  for (int i = 0; i < 16; i++) {
+    fprintf(ofile, "%02x", this->md5sum_[i]);
   }
   fprintf(ofile, "\n");
 }

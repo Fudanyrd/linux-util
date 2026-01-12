@@ -82,8 +82,6 @@ AptListFile::AptListFile(const char *dirname, const char *file) {
   parse(dirname, file);
 }
 
-static HttpClient *client;
-
 struct AptClientHandler : public HttpClientHandler {
   int ofd;
 
@@ -125,7 +123,8 @@ private:
 
   ClientStruct *clients;
 
-  typedef std::function<int(const AptListFile &, HttpClient &)> callbackType;
+  typedef std::function<int(const AptListFile &, 
+    const std::vector<PackageDetail> &, HttpClient &)> callbackType;
 
 public:
   Apt(const char *directory);
@@ -158,7 +157,7 @@ int Apt::find(const std::string &package, callbackType callback) {
     if (iter == file.table.end()) {
       continue;
     } else {
-      return callback(file, clients[i].client);
+      return callback(file, iter->second, clients[i].client);
     }
   }
 
@@ -202,20 +201,7 @@ Apt::Apt(const char *dir) {
   }
 }
 
-static AptClientHandler *handler;
-
-static int download_main(int ofd, const char *pathStr, bool isLast) {
-  dbg.log("Downloading %s\n", pathStr);
-  std::vector<char> path(pathStr, pathStr + strlen(pathStr) + 1);
-  int ret = 1;
-  for (int i = 0; i < APT_MAX_RETRIES; i++) {
-    ret = client->request(HttpMethodType::GET, path, isLast);
-    if (ret == 0) {
-      break;
-    }
-  }
-  return ret;
-}
+static Apt *apt;
 
 static void dumpMD5sum(FILE *file, const unsigned char *md5sum) {
   for (int i = 0; i < 16; i++) {
@@ -351,149 +337,117 @@ static int debug(int argc, char **argv, char **envp) {
   return 0;
 }
 
-static int init_list(std::unordered_map<string, vector<PackageDetail>> &table) {
-  const char *list_dir = AptListDir();
-  DIR *dir = opendir(list_dir);
-
-  char buf[384];
-  strcpy(buf, list_dir);
-  char *append = &buf[strlen(list_dir)];
-  *append = '/';
-  append++;
-  if (!dir) {
-    perror("opendir");
-    return 1;
-  }
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != NULL) {
-    const char *fname = entry->d_name;
-    size_t len = strlen(fname);
-    if (len < 8) {
-      continue;
-    }
-    if (strcmp(fname + len - 8, "Packages") != 0) {
-      continue;
-    }
-
-    strcpy(append, fname);
-    ifstream ifile((const char *)buf);
-    dbg.log("Parsing apt list file: %s\n", fname);
-    AptParse(ifile, table);
-    ifile.close();
-  }
-  closedir(dir);
-  return 0;
-}
-
 static int
-doDownload(const char *package,
-           const std::unordered_map<string, vector<PackageDetail>> &table,
+doDownload(const std::string &package,
            bool isLast) {
   int ret = 0;
 
-  const char *args[3];
-  args[0] = "apt-download";
-  args[1] = args[2] = nullptr;
+  APT_ASSERT(apt);
 
-  APT_ASSERT(package);
-  auto ptr = table.find((const char *)package);
-  if (ptr == table.end()) {
-    fprintf(stderr, "Package: %s Not found\n\n", package);
-    ret = 1;
-    return ret;
-  }
+  const std::string &packageStr = package;
+  auto downloadCallback = [&packageStr, isLast](
+      const AptListFile &file, const std::vector<PackageDetail>& details, HttpClient &client) -> int {
 
-  const auto &detail = ptr->second[0];
-  std::string path = "/ubuntu/" + detail.filename_;
-  std::string ofile = package + std::string(".deb");
-  do {
-    /* user may have downloaded the deb. Check it. */
-    struct stat st;
-    int fd = open(ofile.c_str(), O_RDONLY);
-    if (fd >= 0 && fstat(fd, &st) == 0) {
-      /* check md5sum and size. */
-      if (fileMatch(ofile.c_str(), detail)) {
-        /* skip download */
-        fprintf(stderr, "Package %s already downloaded.\n", package);
-        close(fd);
-        return 0;
+    const auto &detail = details[0];
+    auto *handler = dynamic_cast<AptClientHandler *>(client.getHandler());
+    std::vector<char> path;
+    do {
+      std::string pathStr = file.base + detail.filename_;
+      path = std::vector<char>(pathStr.begin(), pathStr.end());
+      path.push_back(0);
+    } while (0);
+    std::string ofile = packageStr + ".deb";
+
+    int ret;
+    do {
+      /* user may have downloaded the deb. Check it. */
+      struct stat st;
+      int fd = open(ofile.c_str(), O_RDONLY);
+      if (fd >= 0 && fstat(fd, &st) == 0) {
+        /* check md5sum and size. */
+        if (fileMatch(ofile.c_str(), detail)) {
+          /* skip download */
+          dbg.log("Package %s already downloaded.\n", packageStr.c_str());
+          close(fd);
+          return 0;
+        }
       }
+      close(fd);
+    } while (0);
+ 
+    int ofd = open(ofile.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    if (ofd < 0) {
+      perror("open output file");
+      ret = 1;
+      return ret;
     }
-    close(fd);
-  } while (0);
-
-  int ofd = open(ofile.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0666);
-  if (ofd < 0) {
-    perror("open output file");
-    ret = 1;
-    return ret;
-  }
-  handler->ofd = ofd;
-  if ((ret = download_main(ofd, (const char *)path.c_str(), isLast)) != 0) {
-    fprintf(stderr, "Package %s failed download. Stop.\n", package);
+    handler->ofd = ofd;
+    dbg.log("Downloading package %s ...\n", packageStr.c_str()); 
+    if ((ret = client.request(HttpMethodType::GET, path, isLast)) != 0) {
+      fprintf(stderr, "Package %s failed download. Stop.\n", packageStr.c_str());
+      close(ofd);
+      (void)unlink(ofile.c_str());
+      return ret;
+    }
+ 
+    (void)fsync(ofd);
     close(ofd);
-    (void)unlink(ofile.c_str());
+    handler->ofd = -1;
+    dbg.log("Checking MD5 sum...\n");
+    if (!fileMatch(ofile.c_str(), detail)) {
+      fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
+      (void)unlink(ofile.c_str());
+      ret = 1;
+    }
+ 
     return ret;
-  }
+  };
 
-  (void)fsync(ofd);
-  close(ofd);
-  handler->ofd = -1;
-  fprintf(stderr, "Checking MD5 sum...\n");
-  if (!fileMatch(ofile.c_str(), detail)) {
-    fprintf(stderr, "MD5 sum mismatch! Delete file and stop.\n");
-    (void)unlink(ofile.c_str());
-    ret = 1;
+  ret = apt->find(packageStr, downloadCallback);
+  if (ret == ENOENT) {
+    fprintf(stderr, "Package %s not found.\n", package.c_str());
   }
-
   return ret;
 }
 
 static int download(int argc, char **argv, char **envp) {
-  std::unordered_map<string, vector<PackageDetail>> table;
-  int ret;
-  if ((ret = init_list(table)) != 0) {
-    return ret;
-  }
+  int ret = 0;
 
   for (int i = 3; i < argc; i++) {
     const char *package = argv[i];
-    ret |= doDownload(package, table, false);
+    ret |= doDownload(package, false);
   }
   if (argc >= 3) {
     const char *package = argv[2];
-    ret |= doDownload(package, table, true);
+    ret |= doDownload(package, true);
   }
 
   return ret;
 }
 
+static bool packageExists(const std::string &package) {
+  auto checkExistCallback = [](
+    const AptListFile &file, const std::vector<PackageDetail>&, HttpClient&) -> int {
+    return 0;
+  };
+
+  return apt->find(package, checkExistCallback) == 0;
+}
+
 static int downloadDeps(int argc, char **argv, char **envp) {
-
-  std::unordered_map<string, vector<PackageDetail>> table;
   std::function<bool(const std::string &)> exists =
-      [&](const std::string &package) {
-        return table.find(package) != table.end();
-      };
-  int ret = 0;
-  if ((ret = init_list(table)) != 0) {
-    return ret;
-  }
+    packageExists;
 
+  int ret = 0;
   if (argc == 2) {
     fprintf(stderr, "No package specified.\n");
     return 1;
   }
 
   std::set<std::string> packagesRequired;
-  auto doSatisfy = [&](const std::string &package) {
-    packagesRequired.insert(package);
-    auto iter = table.find(package);
-    if (iter == table.end()) {
-      fprintf(stderr, "Package: %s Not found\n\n", package.c_str());
-      return;
-    }
-    PackageDetail &detail = iter->second[0];
+  auto addDepsCallback = [&packagesRequired, &exists](
+    const AptListFile &file, const std::vector<PackageDetail>& details, HttpClient&) {
+    const auto &detail = details[0];
     auto exprTree = detail.deps_;
     if (exprTree) {
       exprTree->satisfy(packagesRequired, exists);
@@ -502,6 +456,11 @@ static int downloadDeps(int argc, char **argv, char **envp) {
     if (exprTree) {
       exprTree->satisfy(packagesRequired, exists);
     }
+    return 0;
+  };
+  auto doSatisfy = [&](const std::string &package) {
+    packagesRequired.insert(package);
+    apt->find(package, addDepsCallback);
   };
 
   for (int i = 2; i < argc; i++) {
@@ -525,48 +484,41 @@ static int downloadDeps(int argc, char **argv, char **envp) {
   {
     auto it = packagesRequired.begin();
     for (it++; it != packagesRequired.end(); it++) {
-      const auto &package = *it;
-      ret |= doDownload(package.c_str(), table, false);
+      ret |= doDownload((*it), false);
     }
   }
   {
     auto it = packagesRequired.begin();
-    ret |= doDownload((*it).c_str(), table, true);
+    ret |= doDownload((*it), true);
   }
   return ret;
 }
 
 static int info(int argc, char **argv, char **envp) {
-  std::unordered_map<string, vector<PackageDetail>> table;
-  if (init_list(table)) {
-    return 1;
-  }
 
   int ret = 0;
-
   for (int i = 2; i < argc; i++) {
-    const char *package = argv[i];
-    APT_ASSERT(package);
-    auto ptr = table.find((const char *)package);
-    if (ptr == table.end()) {
-      printf("Package: %s Not found\n\n", package);
-      ret = 1;
-    } else {
-      const auto &records = ptr->second;
-      APT_ASSERT(records.size());
+    const char *arg = argv[i];
+    auto infoCallback = [arg](
+      const AptListFile &file, const std::vector<PackageDetail>& details, HttpClient&) -> int {
 
-      if (records.size() > 1) {
-        printf("Package: %s (%ld records)\n", package, records.size());
+      const auto size = details.size();
+      if (size > 1) {
+        fprintf(stdout, "Package %s has %zu records:\n", arg, size);
       } else {
-        printf("Package: %s\n", package);
       }
-      for (const auto &record : records) {
-        record.print(stdout);
+      for (const auto &detail : details) {
+        fprintf(stdout, "Package %s:\n", arg);
+        detail.print(stdout);
+        fprintf(stdout, "\n");
       }
-      printf("\n");
-    }
-  }
+      return 0;
+    };
 
+    int r = apt->find(arg, infoCallback);
+    if (r == ENOENT) { fprintf(stderr, "Package %s not found.\n", arg); }
+    ret |= r;
+  }
   return ret;
 }
 
@@ -595,36 +547,15 @@ int main(int argc, char **argv, char **envp) {
     argv[1] = (char *)&empty_str;
   }
 
-  Apt *apt = new Apt(AptListDir());
-  auto infoCallback = [](const AptListFile &file, HttpClient &) -> int {
-    auto iter = file.table.find("firefox");
-    assert (iter != file.table.end());
-    const auto &info = iter->second[0];
-    info.print(stdout);
-    return 0;
-  };
-  // apt->find("firefox", infoCallback);
-  auto downloadCallback = [](const AptListFile &file, HttpClient &client) -> int {
-    auto iter = file.table.find("firefox");
-    assert (iter != file.table.end());
+  auto ptr = ops.find(argv[1]);
+  if (ptr == ops.end()) {
+    help(argc, argv, envp);
+    return 1;
+  }
 
-    const auto &info = iter->second[0];
-    info.print(stdout);
-    std::string pathStr = file.base + info.filename_;
-    std::vector<char> path(pathStr.begin(), pathStr.end());
-    path.push_back(0);
-    auto *handler = dynamic_cast<AptClientHandler *>(client.getHandler());
-    handler->ofd = ::open("a.deb", O_CREAT | O_WRONLY | O_TRUNC, 0666);
-    int ret = client.request(HttpMethodType::GET, path, true);
-    ::close(handler->ofd);
-    handler->ofd = -1;
-    if (!fileMatch("a.deb", info)) {
-      fprintf(stderr, "broken a.deb\n");
-      return 1;
-    }
-    return ret;
-  };
-  int ret = apt->find("firefox", downloadCallback);
+  apt = new Apt(AptListDir());
+  int ret = ptr->second(argc, argv, envp);
   delete apt;
+  apt = nullptr;
   return ret;
 }

@@ -8,7 +8,7 @@ DEFS = -DCONFIG_HAS_SSL
 INCLUDES = -include ./debug.h
 CXXFLAGS = -g -fsanitize=address -Wall -O2
 CXXFLAGS += -Wno-pointer-arith
-CXXFLAGS += -std=c++17
+CXXFLAGS += -std=c++17 -Wall
 CXXFLAGS += -I./libhttpd
 
 CC = gcc
@@ -36,11 +36,12 @@ OBJS := $(SRCS:.cpp=.o)
 SRCS += url.c
 OBJS += url.o
 
-libhttpd/libhttpd.a:
+.PHONY: libs
+libs:
 	$(MAKE) -C libhttpd
 
-apt: $(OBJS) libhttpd/libhttpd.a
-	$(CXX) $(CXXFLAGS) -o $@ $^ -lpthread -ldl -lssl -lcrypto -L./libhttpd -lhttpd
+apt: $(OBJS) libs
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) -lpthread -ldl -lssl -lcrypto -L./libhttpd -lhttpd
 
 debug:
 	echo $(OBJS)
