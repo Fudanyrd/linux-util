@@ -16,6 +16,72 @@
 
 #define APT_MAX_RETRIES 3
 
+#define APT_DISALLOW_COPY(classname)                                           \
+  classname &operator=(const classname &other) = delete;                       \
+  classname(const classname &other) = delete;
+
+struct AptListFile {
+  std::unordered_map<std::string, std::vector<PackageDetail>> table;
+
+  std::vector<char> url; /* archive.ubuntu.com */
+  std::string base;      /* ubuntu */
+
+  AptListFile &operator=(AptListFile &&other) = default;
+  AptListFile(AptListFile &&other) = default;
+  APT_DISALLOW_COPY(AptListFile)
+
+  ~AptListFile() = default;
+  AptListFile(const char *dirname, const char *file);
+
+  bool match(const char *file) const;
+  void parse(const char *dirname, const char *file) {
+    std::string absPath = std::string(dirname) + "/" + file;
+    std::ifstream ifile(absPath.c_str());
+    AptParse(ifile, table);
+    ifile.close();
+  }
+};
+
+bool AptListFile::match(const char *file) const {
+  const char *substr1 = strchr(file, '_');
+  if (!substr1) {
+    return false;
+  }
+  const char *substr2 = strchr(substr1 + 1, '_');
+  if (!substr2) {
+    return false;
+  }
+
+  std::string file_url(file, substr1);
+  if (strncmp(url.data(), file, url.size())) {
+    return false;
+  }
+
+  std::string file_base(substr1 + 1, substr2);
+  file_base = "/" + file_base + "/";
+  if (file_base != base) {
+    return false;
+  }
+
+  return true;
+}
+
+AptListFile::AptListFile(const char *dirname, const char *file) {
+  const char *substr1 = strchr(file, '_');
+  APT_ASSERT(substr1 != nullptr);
+  const char *substr2 = strchr(substr1 + 1, '_');
+  APT_ASSERT(substr2 != nullptr);
+
+  url = std::vector<char>(file, substr1);
+  url.push_back(0);
+
+  base = "/";
+  base += std::string(substr1 + 1, substr2);
+  base += "/";
+
+  parse(dirname, file);
+}
+
 static HttpClient *client;
 
 struct AptClientHandler : public HttpClientHandler {
@@ -23,6 +89,7 @@ struct AptClientHandler : public HttpClientHandler {
 
 public:
   AptClientHandler(const std::vector<char> &host) : HttpClientHandler(host) {}
+  AptClientHandler(const char *host) : HttpClientHandler(host) {}
   bool consume(const void *b, size_t length) override {
     if (ofd < 0) {
       http_assert(0 && "invalid file descriptor");
@@ -31,6 +98,109 @@ public:
     return ret == static_cast<ssize_t>(length);
   }
 };
+
+struct Apt {
+private:
+  AptListFile *searchByFileName(const char *name) {
+    for (auto &file : files) {
+      if (file.match(name)) {
+        return &file;
+      }
+    }
+    return nullptr;
+  }
+
+  std::vector<AptListFile> files;
+
+  struct ClientStruct {
+    AptClientHandler handler;
+    HttpSocket socket;
+    HttpClientProvider provider;
+    HttpClient client;
+
+    ClientStruct(const std::vector<char> &host)
+        : handler(host.data()), socket(), provider(host.data(), 80),
+          client(socket, provider, handler) {}
+  };
+
+  ClientStruct *clients;
+
+  typedef std::function<int(const AptListFile &, HttpClient &)> callbackType;
+
+public:
+  Apt(const char *directory);
+  ~Apt() {
+    size_t len = files.size();
+    for (size_t i = 0; i < len; i++) {
+      clients[i].~ClientStruct();
+    }
+    ::free(clients);
+  }
+
+  /**
+   * Find a package and perform action on it.
+   * 
+   * @param callback a return-0-on-success function.
+   * @return 0 on success; ENOENT if no such package.
+   */
+  int find(const std::string &package, callbackType callback);
+
+  APT_DISALLOW_COPY(Apt)
+};
+
+int Apt::find(const std::string &package, callbackType callback) {
+  auto len = files.size();
+
+  /* iterate over the files and find the package. */
+  for (size_t i = 0; i < len; i++) {
+    const auto &file = files[i];
+    auto iter = file.table.find(package);
+    if (iter == file.table.end()) {
+      continue;
+    } else {
+      return callback(file, clients[i].client);
+    }
+  }
+
+  dbg.log("Package %s be found.\n", package.c_str());
+  return ENOENT;
+}
+
+Apt::Apt(const char *dir) {
+  files.reserve(4);
+
+  DIR *dirp = opendir(dir);
+  struct dirent *entry;
+  while ((entry = readdir(dirp)) != NULL) {
+    const char *fname = entry->d_name;
+    size_t len = strlen(fname);
+    if (len < 8) {
+      continue;
+    }
+    if (strcmp(fname + len - 8, "Packages") != 0) {
+      continue;
+    }
+    auto *aptFile = searchByFileName(fname);
+    dbg.log("Parsing list file %s ...\n", fname);
+    if (aptFile == nullptr) {
+      this->files.push_back(AptListFile(dir, fname));
+    } else {
+      aptFile->parse(dir, fname);
+    }
+  }
+  closedir(dirp);
+
+  size_t len = files.size();
+  clients = (ClientStruct *)malloc(sizeof(ClientStruct) * len);
+  if (clients == nullptr) {
+    perror("malloc");
+    _exit(124);
+  }
+  for (size_t i = 0; i < len; i++) {
+    const auto &host = files[i].url;
+    new (&clients[i]) ClientStruct(host);
+  }
+}
 
 static AptClientHandler *handler;
 
@@ -425,21 +595,36 @@ int main(int argc, char **argv, char **envp) {
     argv[1] = (char *)&empty_str;
   }
 
-  const char *hostStr = "archive.ubuntu.com";
-  std::vector<char> host(hostStr, hostStr + strlen(hostStr) + 1);
-  HttpSocket socket;
-  HttpClientProvider provider(hostStr);
-  handler = new AptClientHandler(host);
-  client = new HttpClient(host, socket, provider, *handler);
+  Apt *apt = new Apt(AptListDir());
+  auto infoCallback = [](const AptListFile &file, HttpClient &) -> int {
+    auto iter = file.table.find("firefox");
+    assert (iter != file.table.end());
+    const auto &info = iter->second[0];
+    info.print(stdout);
+    return 0;
+  };
+  // apt->find("firefox", infoCallback);
+  auto downloadCallback = [](const AptListFile &file, HttpClient &client) -> int {
+    auto iter = file.table.find("firefox");
+    assert (iter != file.table.end());
 
-  auto ptr = ops.find(argv[1]);
-  if (ptr == ops.end()) {
-    help(argc, argv, envp);
-    return 1;
-  }
-
-  int ret = ptr->second(argc, argv, envp);
-  delete client;
-  delete handler;
+    const auto &info = iter->second[0];
+    info.print(stdout);
+    std::string pathStr = file.base + info.filename_;
+    std::vector<char> path(pathStr.begin(), pathStr.end());
+    path.push_back(0);
+    auto *handler = dynamic_cast<AptClientHandler *>(client.getHandler());
+    handler->ofd = ::open("a.deb", O_CREAT | O_WRONLY | O_TRUNC, 0666);
+    int ret = client.request(HttpMethodType::GET, path, true);
+    ::close(handler->ofd);
+    handler->ofd = -1;
+    if (!fileMatch("a.deb", info)) {
+      fprintf(stderr, "broken a.deb\n");
+      return 1;
+    }
+    return ret;
+  };
+  int ret = apt->find("firefox", downloadCallback);
+  delete apt;
   return ret;
 }

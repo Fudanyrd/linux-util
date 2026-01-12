@@ -722,6 +722,8 @@ public:
   }
 
   bool closed(void) const { return !connected; }
+
+  HttpClientHandler *getHandler(void) { return &handler; }
 };
 
 #endif /* _HTTP_CLIENT_H */
