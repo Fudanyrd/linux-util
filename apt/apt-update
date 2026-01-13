@@ -1,0 +1,16 @@
+#!/usr/bin/sh -e
+
+#  A simple script illustrating how apt-update works.
+if [ -z "$APT_LIST_DIR" ]; then
+  APT_LIST_DIR='/var/lib/apt/lists'
+fi
+
+for f in $( ls "$APT_LIST_DIR"/*Packages ); do
+  file=$( basename $f );
+  uri="http://$( echo $file | sed -E "s/_/\//g" )" # FIXME: hard-code "http://"
+  # FIXME: now only save to current directory.
+  ( wget -q "$uri.gz" -O "$file.gz"  && gunzip -f "$file.gz" ) || \
+    ( wget -q "$uri.xz" -O "$file.xz"  && xz -d -f "$file.xz" ) || \
+    ( wget -q "$uri.bz2" -O "$file.bz2" && bzip2 -d -f "$file.bz2" )
+done
+
