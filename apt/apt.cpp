@@ -58,6 +58,7 @@ bool AptListFile::match(const char *file) const {
   int tokens = 0;
 
   /* FIXME: also compare ^0, ^1 against uri. */
+  std::string actualUri;
 
   /* security.ubuntu.com_ubuntu_dists_jammy-security_main_bin... */
   /* ^0                  ^1     ^2    ^3             ^4*/
@@ -71,6 +72,10 @@ bool AptListFile::match(const char *file) const {
       j++;
     }
 #define thisToken std::string(file + i, file + j)
+    if (tokens < 2) {
+      actualUri += thisToken;
+      actualUri += "/";
+    }
     if (tokens == 3) {
       if (thisToken != suite) {
         return false;
@@ -87,6 +92,22 @@ bool AptListFile::match(const char *file) const {
     i = j + 1;
 #undef thisToken
   }
+
+  /* For the example above, actualUri = "security.ubuntu.com/ubuntu/" */
+  do {
+    const auto actualUriLen = actualUri.size();
+    const auto uriLen = uri.size();
+    if (uriLen < actualUriLen) {
+      return false;
+    }
+
+    const auto diff = uriLen - actualUriLen;
+    for (size_t i = 0; i < actualUriLen; i++) {
+      if (uri[i + diff] != actualUri[i]) {
+        return false;
+      }
+    }
+  } while (0);
 
   return true;
 }
@@ -141,6 +162,9 @@ void AptListFile::fromLine(std::vector<AptListFile> &files,
     }
     uri.clear();
     ptr = appendNextToken(ptr, uri);
+  }
+  if (uri.back() != '/') {
+    uri.push_back('/');
   }
   ptr = appendNextToken(ptr, suite);
   ptr = appendNextToken(ptr, component);
@@ -221,7 +245,7 @@ int Apt::find(const std::string &package, callbackType callback) {
     }
   }
 
-  dbg.log("Package %s be found.\n", package.c_str());
+  dbg.log("Package %s not found.\n", package.c_str());
   return ENOENT;
 }
 
@@ -472,7 +496,9 @@ static int doDownload(const std::string &package, bool isLast) {
       }
       uri += detail.filename_;
       /* both GNU wget and busybox wget supports -q. */
-      execlp("wget", "wget", uri.c_str(), "-q", "-O", ofile.c_str(), nullptr);
+      const char *uriStr = uri.c_str();
+      dbg.log("wget %s\n", uriStr);
+      execlp("wget", "wget", uriStr, "-q", "-O", ofile.c_str(), nullptr);
       perror("execlp");
       _exit(12);
     } else {
